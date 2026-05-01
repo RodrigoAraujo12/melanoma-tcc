@@ -7,7 +7,7 @@ venv/
 .venv/
 
 # Data e modelos (muito grandes para o git)
-data/
+/data/
 *.jpg
 *.png
 *.csv
