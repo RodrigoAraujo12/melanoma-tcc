@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.env
+venv/
+.venv/
+
+# Data e modelos (muito grandes para o git)
+data/
+*.jpg
+*.png
+*.csv
+models/
+checkpoints/
+outputs/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# VS Code
+.vscode/
+
+# Segredos
+*.env
+secrets.json
