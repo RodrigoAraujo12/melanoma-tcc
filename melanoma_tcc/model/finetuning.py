@@ -66,15 +66,17 @@ class FineTuningDataset(Dataset):
                 "content": [{"type": "text", "text": sample["answer"]}],
             },
         ]
-        tokenized = self.processor.apply_chat_template(
+        text = self.processor.apply_chat_template(
             messages,
             add_generation_prompt=False,
-            tokenize=True,
-            return_dict=True,
+            tokenize=False,
         )
-        result = {}
-        for k, v in tokenized.items():
-            result[k] = torch.tensor(v) if isinstance(v, list) else v
+        tokenized = self.processor(
+            text=text,
+            images=sample["image"],
+            return_tensors="pt",
+        )
+        result = {k: v.squeeze(0) for k, v in tokenized.items()}
         result["labels"] = result["input_ids"].clone()
         return result
 
