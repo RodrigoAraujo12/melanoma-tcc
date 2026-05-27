@@ -2,7 +2,7 @@ import torch
 from torch.utils.data import Dataset
 from torch.nn.utils.rnn import pad_sequence
 from transformers import AutoProcessor, AutoModelForImageTextToText, BitsAndBytesConfig
-from peft import LoraConfig, get_peft_model, TaskType
+from peft import LoraConfig, get_peft_model, TaskType, prepare_model_for_kbit_training
 from trl import SFTConfig, SFTTrainer
 from huggingface_hub import login
 
@@ -31,6 +31,11 @@ def load_model_for_finetuning(hf_token: str):
 
 
 def apply_lora(model):
+    model = prepare_model_for_kbit_training(
+        model,
+        use_gradient_checkpointing=True,
+        gradient_checkpointing_kwargs={"use_reentrant": False},
+    )
     lora_config = LoraConfig(
         r=16,
         lora_alpha=32,
