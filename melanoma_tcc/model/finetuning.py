@@ -45,6 +45,9 @@ def apply_lora(model):
         task_type=TaskType.CAUSAL_LM,
     )
     model = get_peft_model(model, lora_config)
+    for param in model.parameters():
+        if param.requires_grad:
+            param.data = param.data.to(torch.float32)
     model.print_trainable_parameters()
     return model
 
