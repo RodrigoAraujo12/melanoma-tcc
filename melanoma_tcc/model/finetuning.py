@@ -15,7 +15,7 @@ def load_model_for_finetuning(hf_token: str):
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
         bnb_4bit_quant_type="nf4",
-        bnb_4bit_compute_dtype=torch.bfloat16,
+        bnb_4bit_compute_dtype=torch.float16,
         bnb_4bit_use_double_quant=True,
     )
 
@@ -111,7 +111,7 @@ def get_trainer(model, processor, train_dataset, eval_dataset, output_dir: str):
         learning_rate=2e-4,
         warmup_steps=50,
         lr_scheduler_type="cosine",
-        bf16=True,
+        fp16=True,
         gradient_checkpointing=True,
         gradient_checkpointing_kwargs={"use_reentrant": False},
         optim="paged_adamw_8bit",
