@@ -23,6 +23,7 @@ def load_model_for_finetuning(hf_token: str):
         MODEL_ID,
         token=hf_token,
         quantization_config=bnb_config,
+        torch_dtype=torch.float16,
         device_map="auto",
     )
     processor = AutoProcessor.from_pretrained(MODEL_ID, token=hf_token)
