@@ -37,8 +37,8 @@ def apply_lora(model):
         gradient_checkpointing_kwargs={"use_reentrant": False},
     )
     lora_config = LoraConfig(
-        r=16,
-        lora_alpha=32,
+        r=8,
+        lora_alpha=16,
         target_modules=["q_proj", "v_proj", "k_proj", "o_proj"],
         lora_dropout=0.05,
         bias="none",
@@ -117,8 +117,8 @@ def get_trainer(model, processor, train_dataset, eval_dataset, output_dir: str):
         num_train_epochs=3,
         per_device_train_batch_size=1,
         gradient_accumulation_steps=8,
-        learning_rate=2e-4,
-        warmup_steps=50,
+        learning_rate=5e-5,
+        warmup_ratio=0.1,
         lr_scheduler_type="cosine",
         fp16=False,
         bf16=False,
