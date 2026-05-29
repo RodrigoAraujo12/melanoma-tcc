@@ -1,5 +1,6 @@
+import random
 import pandas as pd
-from PIL import Image
+from PIL import Image, ImageEnhance, ImageOps
 from pathlib import Path
 import torch
 from torch.utils.data import Dataset
@@ -91,6 +92,36 @@ def load_image(image_path: Path, size: tuple = (224, 224)) -> Image.Image:
     return Image.open(image_path).convert("RGB").resize(size)
 
 
+def augment_image(image: Image.Image, rng: random.Random) -> Image.Image:
+    if rng.random() < 0.5:
+        image = ImageOps.mirror(image)
+    angle = rng.uniform(-10, 10)
+    image = image.rotate(angle, resample=Image.BILINEAR, fillcolor=(0, 0, 0))
+    brightness_factor = rng.uniform(0.9, 1.1)
+    image = ImageEnhance.Brightness(image).enhance(brightness_factor)
+    contrast_factor = rng.uniform(0.9, 1.1)
+    image = ImageEnhance.Contrast(image).enhance(contrast_factor)
+    return image
+
+
+def balance_dataframe(df: pd.DataFrame, target_per_class: int = 80,
+                      max_oversample: int = 4, seed: int = 42) -> pd.DataFrame:
+    if "group" not in df.columns:
+        df = df.copy()
+        df["group"] = df["diagnosis"].str.strip().str.lower().map(DIAGNOSIS_GROUPS).fillna("MISC")
+    balanced_parts = []
+    for group_name, group_df in df.groupby("group"):
+        n = len(group_df)
+        if n >= target_per_class:
+            sampled = group_df.sample(n=target_per_class, random_state=seed, replace=False)
+        else:
+            allowed_max = min(target_per_class, n * max_oversample)
+            sampled = group_df.sample(n=allowed_max, random_state=seed, replace=True)
+        balanced_parts.append(sampled)
+    balanced_df = pd.concat(balanced_parts, ignore_index=True)
+    return balanced_df.sample(frac=1, random_state=seed).reset_index(drop=True)
+
+
 class ISICDataset(Dataset):
     def __init__(self, csv_path: str, images_dir: str, processor, split: str = "train"):
         self.df = pd.read_csv(csv_path)
@@ -126,15 +157,23 @@ class ISICDataset(Dataset):
 
 class Derm7ptDataset(Dataset):
     def __init__(self, meta_csv: str, images_dir: str, processor,
-                 indexes_csv: str = None, image_col: str = "derm"):
+                 indexes_csv: str = None, image_col: str = "derm",
+                 balance: bool = False, target_per_class: int = 80,
+                 max_oversample: int = 4, augment: bool = False, seed: int = 42):
         df = pd.read_csv(meta_csv)
         if indexes_csv is not None:
             indexes = pd.read_csv(indexes_csv)["indexes"].tolist()
             df = df.iloc[indexes].reset_index(drop=True)
+        df["group"] = df["diagnosis"].str.strip().str.lower().map(DIAGNOSIS_GROUPS).fillna("MISC")
+        if balance:
+            df = balance_dataframe(df, target_per_class=target_per_class,
+                                   max_oversample=max_oversample, seed=seed)
         self.df = df
         self.images_dir = Path(images_dir)
         self.processor = processor
         self.image_col = image_col
+        self.augment = augment
+        self._aug_rng = random.Random(seed)
 
     def __len__(self):
         return len(self.df)
@@ -143,6 +182,8 @@ class Derm7ptDataset(Dataset):
         row = self.df.iloc[idx]
         image_path = self.images_dir / row[self.image_col]
         image = load_image(image_path)
+        if self.augment:
+            image = augment_image(image, self._aug_rng)
         prompt = build_clinical_prompt(row)
         answer = build_clinical_answer(row)
         diagnosis_raw = str(row.get("diagnosis", "")).strip().lower()
@@ -164,3 +205,18 @@ def split_dataframe(df: pd.DataFrame, val_ratio: float = 0.1, seed: int = 42):
     val_df = df[:val_size]
     train_df = df[val_size:]
     return train_df.reset_index(drop=True), val_df.reset_index(drop=True)
+
+
+def balanced_subset_indices(meta_csv: str, val_indexes_csv: str,
+                            per_class: int = 10, seed: int = 42) -> list:
+    df = pd.read_csv(meta_csv)
+    val_idx = pd.read_csv(val_indexes_csv)["indexes"].tolist()
+    val_df = df.iloc[val_idx].reset_index(drop=True)
+    val_df["group"] = val_df["diagnosis"].str.strip().str.lower().map(DIAGNOSIS_GROUPS).fillna("MISC")
+    selected = []
+    for group in val_df["group"].unique():
+        group_idx = val_df.index[val_df["group"] == group].tolist()
+        n = min(per_class, len(group_idx))
+        sample = val_df.loc[group_idx].sample(n=n, random_state=seed).index.tolist()
+        selected.extend(sample)
+    return [val_idx[i] for i in selected]

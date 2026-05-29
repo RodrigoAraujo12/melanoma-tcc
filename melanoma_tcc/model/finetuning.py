@@ -1,10 +1,21 @@
+import gc
 import torch
 from torch.utils.data import Dataset
 from torch.nn.utils.rnn import pad_sequence
-from transformers import AutoProcessor, AutoModelForImageTextToText, BitsAndBytesConfig
+from transformers import AutoProcessor, AutoModelForImageTextToText, BitsAndBytesConfig, TrainerCallback
 from peft import LoraConfig, get_peft_model, TaskType, prepare_model_for_kbit_training
 from trl import SFTConfig, SFTTrainer
 from huggingface_hub import login
+
+
+class MemoryCleanupCallback(TrainerCallback):
+    def on_evaluate(self, args, state, control, **kwargs):
+        gc.collect()
+        torch.cuda.empty_cache()
+
+    def on_epoch_end(self, args, state, control, **kwargs):
+        gc.collect()
+        torch.cuda.empty_cache()
 
 MODEL_ID = "google/medgemma-4b-it"
 
@@ -114,9 +125,11 @@ def get_trainer(model, processor, train_dataset, eval_dataset, output_dir: str):
 
     training_args = SFTConfig(
         output_dir=output_dir,
-        num_train_epochs=3,
+        num_train_epochs=4,
         per_device_train_batch_size=1,
+        per_device_eval_batch_size=1,
         gradient_accumulation_steps=8,
+        eval_accumulation_steps=4,
         learning_rate=5e-5,
         warmup_ratio=0.1,
         lr_scheduler_type="cosine",
@@ -141,4 +154,5 @@ def get_trainer(model, processor, train_dataset, eval_dataset, output_dir: str):
         train_dataset=train_ft,
         eval_dataset=eval_ft,
         data_collator=collate_fn,
+        callbacks=[MemoryCleanupCallback()],
     )
