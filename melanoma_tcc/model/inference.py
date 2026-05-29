@@ -75,22 +75,50 @@ def extract_label_from_response(response: str) -> int:
     return -1
 
 
+import re
+
+
 CLASS_KEYWORDS = {
-    "MEL": ["melanoma"],
     "BCC": ["basal cell carcinoma", "basal-cell carcinoma", "bcc"],
     "SK": ["seborrheic keratosis", "seborrhoeic keratosis"],
+    "MEL": ["melanoma"],
     "NEV": ["nevus", "nevi", "naevus"],
     "MISC": ["dermatofibroma", "lentigo", "melanosis", "vascular lesion", "other lesion", "miscellaneous"],
 }
 
-GROUP_ORDER = ["MEL", "BCC", "SK", "NEV", "MISC"]
 GROUP_TO_LABEL = {"BCC": 0, "NEV": 1, "MEL": 2, "SK": 3, "MISC": 4}
 
 
+def _match_group_in_text(text: str) -> str:
+    text = text.lower()
+    for group, keywords in CLASS_KEYWORDS.items():
+        for kw in keywords:
+            if kw in text:
+                return group
+    return None
+
+
 def extract_multiclass_label(response: str) -> int:
-    response_lower = response.lower()
-    for group in GROUP_ORDER:
-        for kw in CLASS_KEYWORDS[group]:
-            if kw in response_lower:
+    bold_matches = re.findall(r"\*\*([^*]+)\*\*", response)
+    for match in bold_matches:
+        group = _match_group_in_text(match)
+        if group is not None:
+            return GROUP_TO_LABEL[group]
+
+    patterns = [
+        r"diagnosis is[:\s]+([^.\n]+)",
+        r"most likely diagnosis is[:\s]+([^.\n]+)",
+        r"consistent with[:\s]+([^.\n]+)",
+        r"suggest(?:s|ive of)?[:\s]+([^.\n]+)",
+    ]
+    for pattern in patterns:
+        m = re.search(pattern, response.lower())
+        if m:
+            group = _match_group_in_text(m.group(1))
+            if group is not None:
                 return GROUP_TO_LABEL[group]
+
+    group = _match_group_in_text(response)
+    if group is not None:
+        return GROUP_TO_LABEL[group]
     return -1
