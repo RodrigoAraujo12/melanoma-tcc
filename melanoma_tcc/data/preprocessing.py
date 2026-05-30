@@ -207,6 +207,78 @@ def split_dataframe(df: pd.DataFrame, val_ratio: float = 0.1, seed: int = 42):
     return train_df.reset_index(drop=True), val_df.reset_index(drop=True)
 
 
+SEX_CATEGORIES = ["female", "male"]
+LOCATION_CATEGORIES = ["abdomen", "back", "head neck", "upper limbs",
+                       "lower limbs", "acral", "buttocks", "chest"]
+ELEVATION_CATEGORIES = ["flat", "palpable", "nodular"]
+METADATA_DIM = len(SEX_CATEGORIES) + len(LOCATION_CATEGORIES) + len(ELEVATION_CATEGORIES)
+
+
+def encode_metadata(row: pd.Series) -> torch.Tensor:
+    sex = str(row.get("sex", "")).strip().lower()
+    location = str(row.get("location", "")).strip().lower()
+    elevation = str(row.get("elevation", "")).strip().lower()
+    vec = []
+    for c in SEX_CATEGORIES:
+        vec.append(1.0 if sex == c else 0.0)
+    for c in LOCATION_CATEGORIES:
+        vec.append(1.0 if location == c else 0.0)
+    for c in ELEVATION_CATEGORIES:
+        vec.append(1.0 if elevation == c else 0.0)
+    return torch.tensor(vec, dtype=torch.float32)
+
+
+class Derm7ptClassificationDataset(Dataset):
+    def __init__(self, meta_csv: str, images_dir: str, processor,
+                 indexes_csv: str = None, image_col: str = "derm",
+                 balance: bool = False, target_per_class: int = 80,
+                 max_oversample: int = 4, augment: bool = False, seed: int = 42):
+        df = pd.read_csv(meta_csv)
+        if indexes_csv is not None:
+            indexes = pd.read_csv(indexes_csv)["indexes"].tolist()
+            df = df.iloc[indexes].reset_index(drop=True)
+        df["group"] = df["diagnosis"].str.strip().str.lower().map(DIAGNOSIS_GROUPS).fillna("MISC")
+        if balance:
+            df = balance_dataframe(df, target_per_class=target_per_class,
+                                   max_oversample=max_oversample, seed=seed)
+        self.df = df
+        self.images_dir = Path(images_dir)
+        self.processor = processor
+        self.image_col = image_col
+        self.augment = augment
+        self._aug_rng = random.Random(seed)
+
+    def __len__(self):
+        return len(self.df)
+
+    def __getitem__(self, idx):
+        row = self.df.iloc[idx]
+        image_path = self.images_dir / row[self.image_col]
+        image = load_image(image_path, size=(224, 224))
+        if self.augment:
+            image = augment_image(image, self._aug_rng)
+        processed = self.processor(images=image, return_tensors="pt")
+        pixel_values = processed["pixel_values"].squeeze(0)
+        metadata = encode_metadata(row)
+        diagnosis_raw = str(row.get("diagnosis", "")).strip().lower()
+        group = DIAGNOSIS_GROUPS.get(diagnosis_raw, "MISC")
+        label = GROUP_TO_LABEL[group]
+        return {
+            "pixel_values": pixel_values,
+            "metadata": metadata,
+            "labels": torch.tensor(label, dtype=torch.long),
+            "group": group,
+        }
+
+
+def classification_collate_fn(batch):
+    return {
+        "pixel_values": torch.stack([b["pixel_values"] for b in batch]),
+        "metadata": torch.stack([b["metadata"] for b in batch]),
+        "labels": torch.stack([b["labels"] for b in batch]),
+    }
+
+
 def balanced_subset_indices(meta_csv: str, val_indexes_csv: str,
                             per_class: int = 10, seed: int = 42) -> list:
     df = pd.read_csv(meta_csv)
