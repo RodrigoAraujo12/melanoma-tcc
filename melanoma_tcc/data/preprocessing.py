@@ -257,7 +257,8 @@ class Derm7ptClassificationDataset(Dataset):
         image = load_image(image_path, size=(224, 224))
         if self.augment:
             image = augment_image(image, self._aug_rng)
-        processed = self.processor(images=image, return_tensors="pt")
+        image_processor = getattr(self.processor, "image_processor", None) or self.processor
+        processed = image_processor(images=image, return_tensors="pt")
         pixel_values = processed["pixel_values"].squeeze(0)
         metadata = encode_metadata(row)
         diagnosis_raw = str(row.get("diagnosis", "")).strip().lower()
