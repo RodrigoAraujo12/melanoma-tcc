@@ -8,6 +8,29 @@ from huggingface_hub import login
 MODEL_ID = "google/medgemma-4b-it"
 
 
+def _find_vision_tower(model):
+    candidates = [
+        lambda m: m.vision_tower,
+        lambda m: m.model.vision_tower,
+        lambda m: m.vision_model,
+        lambda m: m.model.vision_model,
+        lambda m: m.vision_encoder,
+        lambda m: m.model.vision_encoder,
+    ]
+    for getter in candidates:
+        try:
+            tower = getter(model)
+            if tower is not None:
+                return tower
+        except AttributeError:
+            continue
+    submodules = [n for n, _ in model.named_modules() if ("vision" in n.lower() or "siglip" in n.lower()) and "." not in n.replace("model.", "").rstrip(".")]
+    raise RuntimeError(
+        f"Could not find vision tower. Top-level attrs: {dir(model)[:30]}... "
+        f"Vision-related submodules: {submodules[:10]}"
+    )
+
+
 def load_medgemma_vision(hf_token: str):
     login(token=hf_token)
     processor = AutoProcessor.from_pretrained(MODEL_ID, token=hf_token)
@@ -17,16 +40,17 @@ def load_medgemma_vision(hf_token: str):
         torch_dtype=torch.float16,
         device_map="auto",
     )
-    vision_encoder = full_model.vision_tower
+    vision_encoder = _find_vision_tower(full_model)
     vision_encoder.requires_grad_(False)
-    try:
-        del full_model.language_model
-    except AttributeError:
-        pass
-    try:
-        del full_model.multi_modal_projector
-    except AttributeError:
-        pass
+    for attr in ("language_model", "multi_modal_projector", "lm_head"):
+        try:
+            inner = full_model.model if hasattr(full_model, "model") else full_model
+            if hasattr(inner, attr):
+                delattr(inner, attr)
+            elif hasattr(full_model, attr):
+                delattr(full_model, attr)
+        except (AttributeError, TypeError):
+            pass
     del full_model
     gc.collect()
     torch.cuda.empty_cache()
