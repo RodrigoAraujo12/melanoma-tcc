@@ -105,7 +105,8 @@ def augment_image(image: Image.Image, rng: random.Random) -> Image.Image:
 
 
 def balance_dataframe(df: pd.DataFrame, target_per_class: int = 80,
-                      max_oversample: int = 4, seed: int = 42) -> pd.DataFrame:
+                      max_oversample: int = 4, seed: int = 42,
+                      undersample: bool = True) -> pd.DataFrame:
     if "group" not in df.columns:
         df = df.copy()
         df["group"] = df["diagnosis"].str.strip().str.lower().map(DIAGNOSIS_GROUPS).fillna("MISC")
@@ -113,7 +114,10 @@ def balance_dataframe(df: pd.DataFrame, target_per_class: int = 80,
     for group_name, group_df in df.groupby("group"):
         n = len(group_df)
         if n >= target_per_class:
-            sampled = group_df.sample(n=target_per_class, random_state=seed, replace=False)
+            if undersample:
+                sampled = group_df.sample(n=target_per_class, random_state=seed, replace=False)
+            else:
+                sampled = group_df
         else:
             allowed_max = min(target_per_class, n * max_oversample)
             sampled = group_df.sample(n=allowed_max, random_state=seed, replace=True)
@@ -232,7 +236,8 @@ class Derm7ptClassificationDataset(Dataset):
     def __init__(self, meta_csv: str, images_dir: str, processor,
                  indexes_csv: str = None, image_col: str = "derm",
                  balance: bool = False, target_per_class: int = 80,
-                 max_oversample: int = 4, augment: bool = False, seed: int = 42):
+                 max_oversample: int = 4, augment: bool = False, seed: int = 42,
+                 undersample: bool = True):
         df = pd.read_csv(meta_csv)
         if indexes_csv is not None:
             indexes = pd.read_csv(indexes_csv)["indexes"].tolist()
@@ -240,7 +245,8 @@ class Derm7ptClassificationDataset(Dataset):
         df["group"] = df["diagnosis"].str.strip().str.lower().map(DIAGNOSIS_GROUPS).fillna("MISC")
         if balance:
             df = balance_dataframe(df, target_per_class=target_per_class,
-                                   max_oversample=max_oversample, seed=seed)
+                                   max_oversample=max_oversample, seed=seed,
+                                   undersample=undersample)
         self.df = df
         self.images_dir = Path(images_dir)
         self.processor = processor
