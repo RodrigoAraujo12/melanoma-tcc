@@ -307,9 +307,9 @@ def balanced_subset_indices(meta_csv: str, val_indexes_csv: str,
 # v5: Schema unificado para mesclar Derm7pt + HAM10000
 # ============================================================================
 
-SEX_CATEGORIES_V5 = ["female", "male", "unknown"]
+SEX_CATEGORIES_V5 = ["female", "male"]
 LOCATION_CATEGORIES_V5 = ["abdomen", "back", "head_neck", "upper_limbs",
-                          "lower_limbs", "acral", "chest", "genital", "unknown"]
+                          "lower_limbs", "acral", "chest", "genital"]
 METADATA_DIM_V5 = len(SEX_CATEGORIES_V5) + len(LOCATION_CATEGORIES_V5)
 
 
@@ -415,14 +415,35 @@ class Derm7ptUnifiedDataset(Dataset):
         }
 
 
-class HAM10000Dataset(Dataset):
-    """HAM10000 com mesmo schema unificado do Derm7ptUnifiedDataset."""
+def _filter_ham_unknowns(df: pd.DataFrame) -> pd.DataFrame:
+    sex_lower = df["sex"].astype(str).str.strip().str.lower()
+    loc_lower = df["localization"].astype(str).str.strip().str.lower()
+    sex_ok = sex_lower.isin(SEX_CATEGORIES_V5)
+    loc_ok = loc_lower.map(HAM_LOCATION_MAP).isin(LOCATION_CATEGORIES_V5)
+    return df[sex_ok & loc_ok].reset_index(drop=True)
 
-    def __init__(self, meta_csv: str, base_dir: str, processor,
-                 indexes: list = None, augment: bool = False, seed: int = 42):
-        df = pd.read_csv(meta_csv)
-        if indexes is not None:
-            df = df.iloc[indexes].reset_index(drop=True)
+
+class HAM10000Dataset(Dataset):
+    """HAM10000 com mesmo schema unificado do Derm7ptUnifiedDataset.
+
+    Aceita meta_csv (str) ou DataFrame ja preparado.
+    Por padrao filtra samples com sex='unknown' ou localizacao mapeada como 'unknown',
+    eliminando vazamento de origem (essas categorias so existem em HAM).
+    """
+
+    def __init__(self, source, base_dir: str, processor,
+                 augment: bool = False, seed: int = 42,
+                 filter_unknown: bool = True):
+        if isinstance(source, pd.DataFrame):
+            df = source.copy()
+        else:
+            df = pd.read_csv(source)
+        if filter_unknown:
+            n_before = len(df)
+            df = _filter_ham_unknowns(df)
+            self._n_filtered = n_before - len(df)
+        else:
+            self._n_filtered = 0
         df["group"] = df["dx"].str.strip().str.lower().map(HAM_DX_TO_GROUP).fillna("MISC")
         self.df = df
         self.base_dir = Path(base_dir)
@@ -487,13 +508,16 @@ class CombinedDermDataset(Dataset):
         raise IndexError(f"Index {idx} out of range (total={self.cumulative[-1]})")
 
 
-def ham10000_train_val_split(meta_csv: str, val_ratio: float = 0.15, seed: int = 42):
+def ham10000_train_val_split(meta_csv: str, val_ratio: float = 0.15, seed: int = 42,
+                             filter_unknown: bool = True):
     df = pd.read_csv(meta_csv)
+    if filter_unknown:
+        df = _filter_ham_unknowns(df)
     lesions = df["lesion_id"].unique()
     rng = np.random.default_rng(seed)
     rng.shuffle(lesions)
     n_val = int(len(lesions) * val_ratio)
     val_lesions = set(lesions[:n_val])
-    val_idx = df.index[df["lesion_id"].isin(val_lesions)].tolist()
-    train_idx = df.index[~df["lesion_id"].isin(val_lesions)].tolist()
-    return train_idx, val_idx
+    train_df = df[~df["lesion_id"].isin(val_lesions)].reset_index(drop=True)
+    val_df = df[df["lesion_id"].isin(val_lesions)].reset_index(drop=True)
+    return train_df, val_df
