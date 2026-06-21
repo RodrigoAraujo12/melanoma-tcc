@@ -1,4 +1,6 @@
+import os
 import random
+import numpy as np
 import pandas as pd
 from PIL import Image, ImageEnhance, ImageOps
 from pathlib import Path
@@ -299,3 +301,199 @@ def balanced_subset_indices(meta_csv: str, val_indexes_csv: str,
         sample = val_df.loc[group_idx].sample(n=n, random_state=seed).index.tolist()
         selected.extend(sample)
     return [val_idx[i] for i in selected]
+
+
+# ============================================================================
+# v5: Schema unificado para mesclar Derm7pt + HAM10000
+# ============================================================================
+
+SEX_CATEGORIES_V5 = ["female", "male", "unknown"]
+LOCATION_CATEGORIES_V5 = ["abdomen", "back", "head_neck", "upper_limbs",
+                          "lower_limbs", "acral", "chest", "genital", "unknown"]
+METADATA_DIM_V5 = len(SEX_CATEGORIES_V5) + len(LOCATION_CATEGORIES_V5)
+
+
+DERM7PT_LOCATION_MAP = {
+    "abdomen": "abdomen",
+    "back": "back",
+    "head neck": "head_neck",
+    "upper limbs": "upper_limbs",
+    "lower limbs": "lower_limbs",
+    "acral": "acral",
+    "buttocks": "lower_limbs",
+    "chest": "chest",
+    "genital areas": "genital",
+}
+
+
+HAM_LOCATION_MAP = {
+    "abdomen": "abdomen",
+    "back": "back",
+    "trunk": "back",
+    "chest": "chest",
+    "acral": "acral",
+    "face": "head_neck",
+    "scalp": "head_neck",
+    "ear": "head_neck",
+    "neck": "head_neck",
+    "upper extremity": "upper_limbs",
+    "hand": "upper_limbs",
+    "lower extremity": "lower_limbs",
+    "foot": "lower_limbs",
+    "genital": "genital",
+    "unknown": "unknown",
+}
+
+
+HAM_DX_TO_GROUP = {
+    "nv": "NEV",
+    "mel": "MEL",
+    "bkl": "SK",
+    "bcc": "BCC",
+    "akiec": "MISC",
+    "vasc": "MISC",
+    "df": "MISC",
+}
+
+
+def _onehot(value, categories):
+    return [1.0 if value == c else 0.0 for c in categories]
+
+
+def encode_metadata_unified(sex_raw: str, location_unified: str) -> torch.Tensor:
+    sex = str(sex_raw).strip().lower()
+    if sex not in SEX_CATEGORIES_V5:
+        sex = "unknown"
+    location = str(location_unified).strip().lower()
+    if location not in LOCATION_CATEGORIES_V5:
+        location = "unknown"
+    vec = _onehot(sex, SEX_CATEGORIES_V5) + _onehot(location, LOCATION_CATEGORIES_V5)
+    return torch.tensor(vec, dtype=torch.float32)
+
+
+class Derm7ptUnifiedDataset(Dataset):
+    """Versao v5 do Derm7pt usando schema unificado (sex 3 + location 9 = 12 dim)."""
+
+    def __init__(self, meta_csv: str, images_dir: str, processor,
+                 indexes_csv: str = None, image_col: str = "derm",
+                 augment: bool = False, seed: int = 42):
+        df = pd.read_csv(meta_csv)
+        if indexes_csv is not None:
+            indexes = pd.read_csv(indexes_csv)["indexes"].tolist()
+            df = df.iloc[indexes].reset_index(drop=True)
+        df["group"] = df["diagnosis"].str.strip().str.lower().map(DIAGNOSIS_GROUPS).fillna("MISC")
+        self.df = df
+        self.images_dir = Path(images_dir)
+        self.processor = processor
+        self.image_col = image_col
+        self.augment = augment
+        self._aug_rng = random.Random(seed)
+
+    def __len__(self):
+        return len(self.df)
+
+    def __getitem__(self, idx):
+        row = self.df.iloc[idx]
+        image_path = self.images_dir / row[self.image_col]
+        image = load_image(image_path, size=(224, 224))
+        if self.augment:
+            image = augment_image(image, self._aug_rng)
+        image_processor = getattr(self.processor, "image_processor", None) or self.processor
+        processed = image_processor(images=image, return_tensors="pt")
+        pixel_values = processed["pixel_values"].squeeze(0)
+        loc_raw = str(row.get("location", "")).strip().lower()
+        location_unified = DERM7PT_LOCATION_MAP.get(loc_raw, "unknown")
+        metadata = encode_metadata_unified(row.get("sex", ""), location_unified)
+        group = row["group"]
+        label = GROUP_TO_LABEL[group]
+        return {
+            "pixel_values": pixel_values,
+            "metadata": metadata,
+            "labels": torch.tensor(label, dtype=torch.long),
+            "group": group,
+            "source": "derm7pt",
+        }
+
+
+class HAM10000Dataset(Dataset):
+    """HAM10000 com mesmo schema unificado do Derm7ptUnifiedDataset."""
+
+    def __init__(self, meta_csv: str, base_dir: str, processor,
+                 indexes: list = None, augment: bool = False, seed: int = 42):
+        df = pd.read_csv(meta_csv)
+        if indexes is not None:
+            df = df.iloc[indexes].reset_index(drop=True)
+        df["group"] = df["dx"].str.strip().str.lower().map(HAM_DX_TO_GROUP).fillna("MISC")
+        self.df = df
+        self.base_dir = Path(base_dir)
+        self.processor = processor
+        self.augment = augment
+        self._aug_rng = random.Random(seed)
+
+        self._image_lookup = {}
+        for part in ["HAM10000_images_part_1", "HAM10000_images_part_2"]:
+            part_dir = self.base_dir / part
+            if part_dir.exists():
+                for f in os.listdir(part_dir):
+                    if f.endswith(".jpg"):
+                        self._image_lookup[f[:-4]] = part_dir / f
+
+    def __len__(self):
+        return len(self.df)
+
+    def __getitem__(self, idx):
+        row = self.df.iloc[idx]
+        image_id = row["image_id"]
+        image_path = self._image_lookup.get(image_id)
+        if image_path is None:
+            raise FileNotFoundError(f"HAM image {image_id} not found")
+        image = load_image(image_path, size=(224, 224))
+        if self.augment:
+            image = augment_image(image, self._aug_rng)
+        image_processor = getattr(self.processor, "image_processor", None) or self.processor
+        processed = image_processor(images=image, return_tensors="pt")
+        pixel_values = processed["pixel_values"].squeeze(0)
+        loc_raw = str(row.get("localization", "")).strip().lower()
+        location_unified = HAM_LOCATION_MAP.get(loc_raw, "unknown")
+        metadata = encode_metadata_unified(row.get("sex", ""), location_unified)
+        group = row["group"]
+        label = GROUP_TO_LABEL[group]
+        return {
+            "pixel_values": pixel_values,
+            "metadata": metadata,
+            "labels": torch.tensor(label, dtype=torch.long),
+            "group": group,
+            "source": "ham10000",
+        }
+
+
+class CombinedDermDataset(Dataset):
+    """Concatena multiplos datasets com mesmo schema. Compativel com PyTorch DataLoader."""
+
+    def __init__(self, datasets: list):
+        self.datasets = datasets
+        self.cumulative = [0]
+        for d in datasets:
+            self.cumulative.append(self.cumulative[-1] + len(d))
+
+    def __len__(self):
+        return self.cumulative[-1]
+
+    def __getitem__(self, idx):
+        for i in range(len(self.datasets)):
+            if idx < self.cumulative[i + 1]:
+                local_idx = idx - self.cumulative[i]
+                return self.datasets[i][local_idx]
+        raise IndexError(f"Index {idx} out of range (total={self.cumulative[-1]})")
+
+
+def ham10000_train_val_split(meta_csv: str, val_ratio: float = 0.15, seed: int = 42):
+    df = pd.read_csv(meta_csv)
+    lesions = df["lesion_id"].unique()
+    rng = np.random.default_rng(seed)
+    rng.shuffle(lesions)
+    n_val = int(len(lesions) * val_ratio)
+    val_lesions = set(lesions[:n_val])
+    val_idx = df.index[df["lesion_id"].isin(val_lesions)].tolist()
+    train_idx = df.index[~df["lesion_id"].isin(val_lesions)].tolist()
+    return train_idx, val_idx
