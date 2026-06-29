@@ -22,6 +22,7 @@ Período: Maio–Junho 2026
    - [v5 — Merge Derm7pt + HAM10000 com schema unificado](#v5--merge-derm7pt--ham10000-com-schema-unificado)
    - [v6 — Balanceamento por corte de NEV + cache de embeddings](#v6--balanceamento-por-corte-de-nev--cache-de-embeddings)
    - [v7 — Corte profundo de NEV + threshold conservador para MEL](#v7--corte-profundo-de-nev--threshold-conservador-para-mel)
+   - [v8 — Unfreeze dos 2 últimos blocos do SigLIP (resultado negativo)](#v8--unfreeze-dos-2-últimos-blocos-do-siglip-resultado-negativo)
 5. [Comparação com a Literatura](#5-comparação-com-a-literatura)
 6. [Problemas Técnicos Enfrentados](#6-problemas-técnicos-enfrentados)
 7. [Decisões Arquiteturais Importantes](#7-decisões-arquiteturais-importantes)
@@ -123,8 +124,9 @@ Desenvolver e avaliar um modelo de inteligência artificial multimodal capaz de 
 | **v5** | Derm7pt + HAM10000 | Classifier + schema unificado (10-dim) | val_acc 78,1% (timeout no test) |
 | **v6** | Derm7pt + HAM10000 | Corte de 2k NEV + cache de embeddings | 72,9% (MEL recall 61%) |
 | **v7** | Derm7pt + HAM10000 | Corte profundo NEV (1,4k) + threshold MEL | **73,7%** (MEL recall 66%) ✅ |
+| **v8** | Derm7pt + HAM10000 | Unfreeze de 2 blocos do encoder + sampler | val macro-F1 0,56 (overfit, ✗ pior que v7) |
 
-> Accuracy reportada no **test do Derm7pt** (395 amostras), comparável entre todas as versões. A partir do v5 os números refletem treino mesclado com HAM10000, mas o test permanece só Derm7pt.
+> Accuracy reportada no **test do Derm7pt** (395 amostras), comparável entre todas as versões. A partir do v5 os números refletem treino mesclado com HAM10000, mas o test permanece só Derm7pt. O **v7 é o modelo final**; o v8 (unfreeze) foi um experimento com resultado negativo.
 
 ---
 
@@ -551,7 +553,44 @@ accuracy **73,7%** | macro-F1 **0,612** — **melhor modelo do trabalho**.
 
 - **Modelo final reportado: v7 argmax** (73,7% accuracy, MEL recall 66%, macro-F1 0,612).
 - O sweep de threshold é apresentado como **análise de sensibilidade**, demonstrando que o ponto de operação é ajustável conforme a prioridade clínica.
-- Cortar NEV abaixo de 1.400 não compensa: o ganho de macro-F1 já estava platôando (v6 0,608 → v7 0,612). O lever seguinte é qualidade de features (trabalho futuro), não mais corte.
+- Cortar NEV abaixo de 1.400 não compensa: o ganho de macro-F1 já estava platôando (v6 0,608 → v7 0,612). O lever seguinte seria qualidade de features — testado no v8 (unfreeze), com resultado negativo.
+
+---
+
+### v8 — Unfreeze dos 2 últimos blocos do SigLIP (resultado negativo)
+
+#### Plano
+
+Testar se descongelar os **2 últimos blocos transformer** do encoder MedSigLIP (treinando-os com LR baixo) melhora a separação MEL/NEV — atacando os falsos-negativos de melanoma que o threshold só desloca, mas não elimina. Hipótese: adaptar as features ao domínio de lesões cutâneas reduziria os MEL→NEV de forma genuína.
+
+#### Configuração
+
+- **Unfreeze:** apenas os 2 últimos de 27 blocos (`encoder.layers[-2:]` do `SiglipVisionModel`) — 30,5M params treináveis (7,4% do total), vs ~330k da cabeça isolada.
+- **LR discriminativo:** cabeça `5e-4`, blocos do encoder `1e-5` (LR alto destruiria o pré-treino médico). Param groups separados no AdamW.
+- **Sem cache de embeddings:** descongelar invalida o cache (o encoder muda a cada época). Augmentation reativada no train.
+- **`WeightedRandomSampler`:** mantém todos os dados (corte NEV=1400) mas balanceia os batches, em vez de descartar mais NEV. Class weights da loss mantidos.
+- **EPOCHS=15** + `ReduceLROnPlateau(patience=2)` + early stopping (patience=4).
+
+#### Resultados (interrompido na época 6)
+
+| Época | train_acc | val_acc | val macro-F1 |
+|---|---|---|---|
+| 1 | 0,489 | 0,635 | 0,514 |
+| 6 | **0,810** | 0,645 | 0,555 |
+
+- **Overfitting claro:** o train_acc disparou (+0,32 em 5 épocas) enquanto o val ficou estagnado (+0,01). O modelo decorou o treino sem generalizar.
+- **Pior que o baseline congelado:** no mesmo `derm_val`, o v8 atingiu macro-F1 **0,555** vs **0,7185** do v7 — uma queda de **0,16**. O unfreeze não recuperaria essa diferença enquanto já estava overfittando.
+- Run interrompido: o val macro-F1 subia devagar mas de forma monótona, o que (a) impedia o early stopping de disparar e (b) levava ao risco de timeout (~50 min/época × 15 ≈ 12,5 h).
+
+#### Conclusão
+
+**Descongelar não compensou.** Com ~4,6k amostras de treino, ajustar 30,5M params do encoder leva a overfitting e **degrada** o macro-F1 vs o encoder congelado. O resultado confirma a decisão arquitetural central do trabalho: **usar o MedSigLIP como feature extractor congelado (v3–v7) foi a escolha correta** para o regime de dados disponível. Para descongelar valer a pena seria necessário muito mais dados de treino (ordem de dezenas de milhares) ou regularização bem mais forte.
+
+> Nota: o v8 alterou vários fatores simultaneamente (unfreeze + `WeightedRandomSampler` + augmentation), então não é uma ablação isolada. O duplo balanceamento (sampler + class weights) pode ter contribuído para a queda. Mas a magnitude do gap (0,16 no val) e o overfitting evidente tornam improvável que um unfreeze isolado superasse o v7.
+
+#### Percalços técnicos (documentados na seção 6)
+
+O v8 exigiu resolver instabilidade numérica do fine-tuning: fp16 puro gerou `NaN` (overflow na atenção ao fazer backward pelo encoder), fp32 puro foi ~8× mais lento (T4 sem tensor cores em fp32), e a solução final foi **AMP** (master weights fp32 + `autocast` + `GradScaler`). Ver itens 6.11–6.13.
 
 ---
 
@@ -617,6 +656,22 @@ Modelo produzia features mas truncava antes do diagnóstico final. **Hipótese:*
 
 Função inicial buscava "melanoma" em qualquer lugar do texto, classificando como MEL respostas como "...not melanoma" ou "rule out melanoma". **Solução:** regex em ordem de prioridade: (1) negrito `**X**`, (2) padrões "diagnosis is X", (3) busca livre como último recurso.
 
+### 6.11 NaN ao descongelar o encoder em float16 (v8)
+
+O MedGemma é carregado em `float16`. Enquanto o encoder ficou **congelado** (v3–v7), nenhum gradiente fluía por ele e o fp16 não causava problema. No v8, ao fazer **backward pelos 2 blocos descongelados**, a atenção em fp16 estourava (overflow → `inf` → `NaN`) por volta do batch 30. **Causa:** treinar pesos fp16 puros é numericamente instável. **Solução:** ver 6.13.
+
+### 6.12 float32 puro é ~8× mais lento no T4 (v8)
+
+Primeira tentativa de corrigir o NaN: castar tudo para `float32` (`model.float()`). Resolveu o NaN, mas o tempo por época saltou para ~3,3 h (≈20 s/batch). **Causa:** o T4 (Turing) só acelera matmuls com **tensor cores em fp16/bf16**; em fp32 cai para os CUDA cores, ~8× mais lento. Inviável (15 épocas ≈ 48 h).
+
+### 6.13 Solução: AMP (autocast + GradScaler) (v8)
+
+Combinação que dá estabilidade **e** velocidade: **master weights em fp32** (`model.float()`, updates estáveis) + **`autocast`** (compute em fp16, usa tensor cores) + **`GradScaler`** (escala a loss antes do backward, evitando o underflow que gerava NaN). Também é preciso `scaler.unscale_(optimizer)` antes do `clip_grad_norm_`. Resultado: ~50 min/época (≈4× mais rápido que fp32) e treino estável. Observação adicional: como `encode_image` usa `torch.enable_grad()` quando `_freeze_vision=False`, isso **sobrepõe** um `torch.no_grad()` externo — por isso o `evaluate()` força `_freeze_vision=True` temporariamente, evitando construir grafo (e consumir memória) durante a avaliação.
+
+### 6.14 OOM ao descongelar com batch 32 (v8)
+
+Backward pelo encoder (mesmo só nos 2 últimos blocos) retém ativações que o caminho congelado (`no_grad`) não retinha. Batch 32 estourou os 14,5 GB do T4 por ~1 GB. Diagnóstico confirmou que o language model **estava** sendo liberado (apenas 2,18 GB pós-build), então o gargalo era ativação pura. **Solução:** `BATCH_SIZE=16` (corta ativações pela metade) + `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` contra fragmentação.
+
 ---
 
 ## 7. Decisões Arquiteturais Importantes
@@ -640,12 +695,13 @@ Combina três vantagens:
 2. **Focusing factor** (γ=2): foca em exemplos difíceis (especificamente MEL heterogêneo)
 3. **Label smoothing** (ε=0.05): previne overconfidence (foi parte do problema em v1)
 
-### 7.4 Por que congelar o vision encoder em v3
+### 7.4 Por que congelar o vision encoder (v3–v7)
 
 - MedSigLIP já foi pré-treinado em imagens médicas
-- Treinar com poucos dados (413 amostras balanceadas) risca catastrophic forgetting
+- Treinar com poucos dados (de 413 a ~4,6k amostras) risca catastrophic forgetting
 - Reduz drasticamente params treináveis (~330k vs ~400M)
 - Treino estável em 15 epochs
+- **Confirmado empiricamente no v8:** descongelar 2 blocos (30,5M params) overfittou e piorou o macro-F1 (0,56 vs 0,72 no val). A decisão de congelar não foi só conveniência — é a escolha correta para o regime de dados.
 
 ### 7.5 Por que separar branches multimodais (vision + tabular)
 
@@ -685,7 +741,8 @@ e:\Projeto_TCC\
 │   ├── 04_classification.ipynb      # v3 + v4: Classification head
 │   ├── 05_combined.ipynb            # v5: Derm7pt + HAM10000 (schema unificado)
 │   ├── 06_combined_balanced.ipynb   # v6: corte de NEV + cache de embeddings
-│   └── 07_combined_threshold.ipynb  # v7: corte profundo NEV + threshold MEL
+│   ├── 07_combined_threshold.ipynb  # v7: corte profundo NEV + threshold MEL
+│   └── 08_unfreeze_2blocks.ipynb    # v8: unfreeze de 2 blocos + AMP (negativo)
 ├── release_v0/                      # Derm7pt dataset (não comitado, gitignored)
 │   ├── images/                      # 34 subpastas, 2022 imagens (1011 dermatoscópicas + 1011 clínicas)
 │   └── meta/
@@ -763,9 +820,9 @@ Derm7pt fornece imagem dermatoscópica + clínica do mesmo caso. Atualmente usam
 
 Pré-computar features clássicas de melanoma (asymmetry, border irregularity, color variance, diameter) via processamento clássico de imagem e adicionar à branch tabular. Pode capturar conhecimento médico estruturado que o modelo aprenderia mais lentamente sozinho.
 
-### 9.4 Unfreeze parcial do MedSigLIP
+### 9.4 Unfreeze parcial do MedSigLIP — testado (v8), resultado negativo
 
-Atualmente o encoder está totalmente congelado. Descongelar as últimas 2-3 layers com LR muito baixo (1e-5) pode permitir adaptação ao domínio específico de lesões cutâneas. Risco: overfit.
+Descongelar os 2 últimos blocos com LR baixo (1e-5) **foi testado no v8** e levou a overfitting, piorando o macro-F1 vs o encoder congelado (0,56 vs 0,72 no val). Com ~4,6k amostras, ajustar 30,5M params do encoder é demais. Para retomar essa direção seria necessário: (a) **muito mais dados** de treino (dezenas de milhares — ex.: ISIC Archive completo), (b) regularização bem mais forte (dropout/weight decay altos, layer-wise LR decay), ou (c) descongelar **só 1 bloco** com LR ainda menor. Ver [seção 4 — v8](#v8--unfreeze-dos-2-últimos-blocos-do-siglip-resultado-negativo).
 
 ### 9.5 Hierarchical classification
 
@@ -838,6 +895,8 @@ Aplicar temperature scaling ou Platt scaling para calibrar a confiança das pred
 | `71c16ba` | v5: schema 10-dim sem unknown + filtro de HAM unknowns (244 samples) |
 | `f52b27a` | v6: corte de 2k NEV + cache de embeddings (encoder congelado) |
 | `e755fa7` | v7: corte profundo de NEV (NEV_TARGET) + threshold conservador para MEL |
+| `b9769ac` | v8: unfreeze dos 2 últimos blocos do SigLIP com LR discriminativo |
+| `7165448` | v8: AMP (autocast + GradScaler) para corrigir NaN/lentidão do unfreeze |
 
 ---
 
