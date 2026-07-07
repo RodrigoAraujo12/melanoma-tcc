@@ -642,16 +642,21 @@ O v7 é robusto (**76,2% ± 2,0%** em 5-fold). O trabalho oferece **dois levers 
 
 ## 5. Comparação com a Literatura
 
-| Modelo | Tipo | Accuracy no Derm7pt | Comentário |
+Comparação no **diagnóstico multiclasse (5 classes)** do Derm7pt — a mesma tarefa deste trabalho:
+
+| Modelo | Tipo | Acc diagnóstico (5-classes) | Comentário |
 |---|---|---|---|
-| **GPT-4V** (OpenAI) | VLM proprietário ~1T params | 85% | Outro patamar (modelo gigante) |
-| **SkinM2Former** (Yan et al., 2024) | Arquitetura especializada (Swin tri-modal) | 77% | Custom para Derm7pt, 200 epochs |
-| **Este trabalho v7** | MedSigLIP + head + merge HAM10000 | **73,7%** (5-fold: 76,2% ± 2,0%) | Open-source, single image + tabular |
-| **Este trabalho v3** | MedSigLIP + classification head | 69% | Só Derm7pt, sem merge |
-| **LLaVA-13B** (Heinlein et al., 2024) | VLM open-source ~13B | 45% | Maior que MedGemma mas sem fine-tuning |
+| **DermFormer** (2025) | ViT multimodal aninhado | **77,9%** | tri-modal (derm + clínica + meta) |
+| **SkinM2Former** (Yan et al., 2024) | Swin tri-modal + 7-pt checklist | **77,85%** | usa o 7-point checklist |
+| **Este trabalho v7** | MedSigLIP + head + merge HAM10000 | **73,7%** (5-fold: 76,2% ± 2,0%) | só imagem derm + metadados básicos, encoder congelado |
+| **Este trabalho v3** | MedSigLIP + classification head | 69% | só Derm7pt, sem merge |
 | Random baseline (5 classes) | — | ~20% | — |
 
-**Posicionamento:** o melhor modelo (v7) supera modelos VLM open-source maiores (LLaVA-13B) e fica a ~3 pontos do estado-da-arte especializado (SkinM2Former), com fração da complexidade e tempo de treino — e usando apenas a imagem dermatoscópica + metadados demográficos básicos (sem o 7-point checklist que o SkinM2Former consome). O **73,7%** é no split oficial do Derm7pt (comparável às linhas acima); a validação 5-fold dá uma estimativa robusta de **76,2% ± 2,0%** (treina em mais dados por fold, protocolo diferente).
+**Posicionamento:** no cenário multiclasse (mais difícil e clinicamente mais informativo), o v7 fica a **~4 pontos** dos melhores resultados recentes (~77–78%: DermFormer, SkinM2Former), que usam **modalidades adicionais** (imagem clínica, metadados ricos e/ou o 7-point checklist). Este trabalho usa apenas a imagem dermatoscópica + metadados demográficos básicos, com encoder congelado e cabeça pequena. O **73,7%** é no split oficial (comparável às linhas acima); o 5-fold dá **76,2% ± 2,0%** (mais dados por fold, protocolo diferente).
+
+> ⚠️ **Cuidado com números "90%+".** Vários trabalhos reportam accuracy ≥ 90% no Derm7pt (ex.: MDSIS-Net, 90,7%), mas medem a tarefa **binária** (melanoma vs não-melanoma) ou a média dos critérios do 7-point checklist — tarefas mais fáceis (chance level 50% vs 20%). **Não são comparáveis** ao diagnóstico 5-classes. A comparação honesta é 5-classes contra 5-classes.
+
+**Fontes:** DermFormer — Springer, *Pattern Analysis and Applications* (2025), doi:10.1007/s10044-025-01572-0; SkinM2Former — arXiv:2409.12390 (2024); MDSIS-Net — PMC11939189.
 
 ---
 
@@ -920,7 +925,11 @@ Aplicar temperature scaling ou Platt scaling para calibrar a confiança das pred
 
 ### Trabalhos comparativos
 
-- **Yan, S., et al.** (2024). A novel perspective for multi-modal multi-label skin lesion classification (SkinM2Former). arxiv:2409.12390
+- **Yan, S., et al.** (2024). A novel perspective for multi-modal multi-label skin lesion classification (SkinM2Former). arxiv:2409.12390 — diagnóstico 5-classes Derm7pt: 77,85%.
+
+- **DermFormer** (2025). Nested multi-modal vision transformers for robust skin cancer detection. *Pattern Analysis and Applications*, doi:10.1007/s10044-025-01572-0 — diagnóstico Derm7pt: 77,9%.
+
+- **MDSIS-Net** (2025). Deep Multi-Modal Skin-Imaging-Based Information-Switching Network for Skin Lesion Recognition. PMC11939189 — 90,7% na tarefa **binária** (melanoma vs não-melanoma), não comparável ao diagnóstico 5-classes.
 
 - **Heinlein, L., et al.** (2024). Assessing the utility of multimodal LLMs in identifying melanoma. PMC10973960
 
