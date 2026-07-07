@@ -23,6 +23,7 @@ Período: Maio–Junho 2026
    - [v6 — Balanceamento por corte de NEV + cache de embeddings](#v6--balanceamento-por-corte-de-nev--cache-de-embeddings)
    - [v7 — Corte profundo de NEV + threshold conservador para MEL](#v7--corte-profundo-de-nev--threshold-conservador-para-mel)
    - [v8 — Unfreeze dos 2 últimos blocos do SigLIP (resultado negativo)](#v8--unfreeze-dos-2-últimos-blocos-do-siglip-resultado-negativo)
+   - [Validação cruzada (5-fold) + TTA — caracterização final do v7](#validação-cruzada-5-fold--tta--caracterização-final-do-v7)
 5. [Comparação com a Literatura](#5-comparação-com-a-literatura)
 6. [Problemas Técnicos Enfrentados](#6-problemas-técnicos-enfrentados)
 7. [Decisões Arquiteturais Importantes](#7-decisões-arquiteturais-importantes)
@@ -126,7 +127,7 @@ Desenvolver e avaliar um modelo de inteligência artificial multimodal capaz de 
 | **v7** | Derm7pt + HAM10000 | Corte profundo NEV (1,4k) + threshold MEL | **73,7%** (MEL recall 66%) ✅ |
 | **v8** | Derm7pt + HAM10000 | Unfreeze de 2 blocos do encoder + sampler | val macro-F1 0,56 (overfit, ✗ pior que v7) |
 
-> Accuracy reportada no **test do Derm7pt** (395 amostras), comparável entre todas as versões. A partir do v5 os números refletem treino mesclado com HAM10000, mas o test permanece só Derm7pt. O **v7 é o modelo final**; o v8 (unfreeze) foi um experimento com resultado negativo.
+> Accuracy reportada no **test do Derm7pt** (395 amostras), comparável entre todas as versões. A partir do v5 os números refletem treino mesclado com HAM10000, mas o test permanece só Derm7pt. O **v7 é o modelo final**; o v8 (unfreeze) foi um experimento com resultado negativo. O v7 foi ainda validado por **5-fold CV** (76,2% ± 2,0%) — ver seção final.
 
 ---
 
@@ -590,7 +591,52 @@ Testar se descongelar os **2 últimos blocos transformer** do encoder MedSigLIP 
 
 #### Percalços técnicos (documentados na seção 6)
 
-O v8 exigiu resolver instabilidade numérica do fine-tuning: fp16 puro gerou `NaN` (overflow na atenção ao fazer backward pelo encoder), fp32 puro foi ~8× mais lento (T4 sem tensor cores em fp32), e a solução final foi **AMP** (master weights fp32 + `autocast` + `GradScaler`). Ver itens 6.11–6.13.
+O v8 exigiu resolver instabilidade numérica do fine-tuning: fp16 puro gerou `NaN` (overflow na atenção ao fazer backward pelo encoder), fp32 puro foi ~8× mais lento (T4 sem tensor cores em fp32), e a solução final foi **AMP** (master weights fp32 + `autocast` + `GradScaler`). Ver itens 6.11–6.14.
+
+---
+
+### Validação cruzada (5-fold) + TTA — caracterização final do v7
+
+#### Motivação
+
+Os conjuntos do Derm7pt são pequenos (val 203, test 395) e uma métrica de split único é ruidosa. Para reportar um número **robusto com variância** e testar um ganho barato de inferência, aplicou-se validação cruzada 5-fold estratificada + **test-time augmentation (TTA)** sobre o pipeline v7 (encoder congelado, corte NEV=1400).
+
+#### Metodologia
+
+- **5-fold estratificado** sobre os 1011 casos do Derm7pt (cada caso testado exatamente 1×; estratificado por classe).
+- Cada fold: cabeça treinada em **(4/5 Derm7pt + HAM cortado)**, testada no 1/5 de fora.
+- Encoder congelado + cache → 5 treinos de cabeça em segundos.
+- **TTA:** original + 4 views aumentadas (flip/rotação/brilho/contraste), média das probabilidades softmax.
+- Épocas fixas (25, onde o v7 convergia) — reprodutível, sem seleção no test.
+
+#### Resultados (média ± desvio, 5 folds)
+
+| Métrica | PLAIN | TTA |
+|---|---|---|
+| **Accuracy** | **0,762 ± 0,020** | 0,745 ± 0,020 |
+| Macro-F1 | 0,636 ± 0,053 | 0,646 ± 0,033 |
+| MEL recall | 0,667 ± 0,056 | **0,723 ± 0,043** |
+| MEL precision | 0,712 ± 0,048 | 0,659 ± 0,055 |
+
+**F1 por classe (PLAIN → TTA):**
+
+| Classe | PLAIN | TTA |
+|---|---|---|
+| BCC | 0,552 ± **0,202** | 0,661 ± 0,103 |
+| NEV | 0,850 ± 0,014 | 0,832 ± 0,017 |
+| MEL | 0,687 ± 0,036 | 0,688 ± 0,035 |
+| SK | 0,482 ± 0,067 | 0,485 ± 0,081 |
+| MISC | 0,610 ± 0,068 | 0,566 ± 0,047 |
+
+#### Análise
+
+- **Número robusto:** o v7 atinge **76,2% ± 2,0%** de accuracy em 5-fold. Fica acima do single-split oficial (73,7%) porque cada fold treina em ~808 casos (4/5) contra 413+203 do split oficial — **mais dados de treino por fold**. Ambos são válidos: o **73,7% é o comparável à literatura** (mesmo split oficial); o **76,2% ± 2,0% é a estimativa robusta**.
+- **NEV é estável** (0,850 ± 0,014); **BCC é altamente variável** (0,552 ± **0,202**) — cada fold de test tem só ~8 BCC, então um erro move muito o F1. É limitação intrínseca ao **suporte pequeno**, não instabilidade do modelo.
+- **TTA não é ganho líquido de accuracy** (−1,7pt; macro-F1 +0,01 está dentro do ruído), mas é um **lever de sensibilidade a melanoma**: MEL recall +5,6pt (66,7 → 72,3%), ao custo de precisão (−5,3pt). Também **estabiliza o BCC** (F1 0,552→0,661; desvio 0,20→0,10).
+
+#### Conclusão
+
+O v7 é robusto (**76,2% ± 2,0%** em 5-fold). O trabalho oferece **dois levers de sensibilidade a melanoma** — threshold conservador e TTA — ambos trocando precisão por recall, com o ponto de operação a critério clínico. A alta variância do BCC entre folds é reportada honestamente como limitação de suporte amostral, não como falha do modelo.
 
 ---
 
@@ -600,12 +646,12 @@ O v8 exigiu resolver instabilidade numérica do fine-tuning: fp16 puro gerou `Na
 |---|---|---|---|
 | **GPT-4V** (OpenAI) | VLM proprietário ~1T params | 85% | Outro patamar (modelo gigante) |
 | **SkinM2Former** (Yan et al., 2024) | Arquitetura especializada (Swin tri-modal) | 77% | Custom para Derm7pt, 200 epochs |
-| **Este trabalho v7** | MedSigLIP + head + merge HAM10000 | **73,7%** | Open-source, single image + tabular |
+| **Este trabalho v7** | MedSigLIP + head + merge HAM10000 | **73,7%** (5-fold: 76,2% ± 2,0%) | Open-source, single image + tabular |
 | **Este trabalho v3** | MedSigLIP + classification head | 69% | Só Derm7pt, sem merge |
 | **LLaVA-13B** (Heinlein et al., 2024) | VLM open-source ~13B | 45% | Maior que MedGemma mas sem fine-tuning |
 | Random baseline (5 classes) | — | ~20% | — |
 
-**Posicionamento:** o melhor modelo (v7) supera modelos VLM open-source maiores (LLaVA-13B) e fica a ~3 pontos do estado-da-arte especializado (SkinM2Former), com fração da complexidade e tempo de treino — e usando apenas a imagem dermatoscópica + metadados demográficos básicos (sem o 7-point checklist que o SkinM2Former consome).
+**Posicionamento:** o melhor modelo (v7) supera modelos VLM open-source maiores (LLaVA-13B) e fica a ~3 pontos do estado-da-arte especializado (SkinM2Former), com fração da complexidade e tempo de treino — e usando apenas a imagem dermatoscópica + metadados demográficos básicos (sem o 7-point checklist que o SkinM2Former consome). O **73,7%** é no split oficial do Derm7pt (comparável às linhas acima); a validação 5-fold dá uma estimativa robusta de **76,2% ± 2,0%** (treina em mais dados por fold, protocolo diferente).
 
 ---
 
@@ -742,7 +788,8 @@ e:\Projeto_TCC\
 │   ├── 05_combined.ipynb            # v5: Derm7pt + HAM10000 (schema unificado)
 │   ├── 06_combined_balanced.ipynb   # v6: corte de NEV + cache de embeddings
 │   ├── 07_combined_threshold.ipynb  # v7: corte profundo NEV + threshold MEL
-│   └── 08_unfreeze_2blocks.ipynb    # v8: unfreeze de 2 blocos + AMP (negativo)
+│   ├── 08_unfreeze_2blocks.ipynb    # v8: unfreeze de 2 blocos + AMP (negativo)
+│   └── 09_kfold_tta.ipynb           # v7: validação cruzada 5-fold + TTA
 ├── release_v0/                      # Derm7pt dataset (não comitado, gitignored)
 │   ├── images/                      # 34 subpastas, 2022 imagens (1011 dermatoscópicas + 1011 clínicas)
 │   └── meta/
@@ -897,6 +944,7 @@ Aplicar temperature scaling ou Platt scaling para calibrar a confiança das pred
 | `e755fa7` | v7: corte profundo de NEV (NEV_TARGET) + threshold conservador para MEL |
 | `b9769ac` | v8: unfreeze dos 2 últimos blocos do SigLIP com LR discriminativo |
 | `7165448` | v8: AMP (autocast + GradScaler) para corrigir NaN/lentidão do unfreeze |
+| `60bf30c` | v7 kfold+tta: validação cruzada 5-fold estratificada + TTA |
 
 ---
 
