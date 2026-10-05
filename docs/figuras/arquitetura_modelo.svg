@@ -1,0 +1,156 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1090" viewBox="0 0 1200 1090" font-family="Liberation Sans, Arial, Helvetica, sans-serif">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#333"/>
+    </marker>
+    <marker id="arrg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#888"/>
+    </marker>
+    <pattern id="hatch" width="10" height="10" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="10" height="10" fill="#E6EDF5"/>
+      <line x1="0" y1="0" x2="0" y2="10" stroke="#D2DDEA" stroke-width="4"/>
+    </pattern>
+    <radialGradient id="lesion" cx="45%" cy="45%" r="60%">
+      <stop offset="0%" stop-color="#3B2116"/>
+      <stop offset="55%" stop-color="#6B3F2A"/>
+      <stop offset="100%" stop-color="#B98A6E"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="1200" height="1090" fill="#FFFFFF"/>
+
+  <!-- ============ Cabeçalhos das modalidades ============ -->
+  <text x="330" y="28" text-anchor="middle" font-size="15" font-weight="bold" fill="#555" letter-spacing="1.5">MODALIDADE VISUAL</text>
+  <text x="870" y="28" text-anchor="middle" font-size="15" font-weight="bold" fill="#555" letter-spacing="1.5">MODALIDADE TABULAR</text>
+
+  <!-- ============ Entradas ============ -->
+  <rect x="110" y="42" width="440" height="96" rx="10" fill="#F4F4F4" stroke="#555" stroke-width="1.6"/>
+  <rect x="128" y="56" width="68" height="68" rx="4" fill="#E9C9AE"/>
+  <ellipse cx="162" cy="90" rx="24" ry="20" fill="url(#lesion)"/>
+  <text x="372" y="80" text-anchor="middle" font-size="19" font-weight="bold" fill="#222">Imagem dermatoscópica</text>
+  <text x="372" y="108" text-anchor="middle" font-size="16" fill="#333">224 × 224 × 3 (RGB)</text>
+
+  <rect x="650" y="42" width="440" height="96" rx="10" fill="#F4F4F4" stroke="#555" stroke-width="1.6"/>
+  <text x="870" y="72" text-anchor="middle" font-size="19" font-weight="bold" fill="#222">Metadados clínicos</text>
+  <text x="870" y="98" text-anchor="middle" font-size="15.5" fill="#333">sexo (2) + localização anatômica (8)</text>
+  <text x="870" y="122" text-anchor="middle" font-size="15.5" fill="#333">codificação one-hot → vetor 10-d</text>
+
+  <!-- ============ Encoder visual congelado ============ -->
+  <line x1="330" y1="138" x2="330" y2="172" stroke="#333" stroke-width="1.8" marker-end="url(#arr)"/>
+  <text x="340" y="160" font-size="13.5" fill="#555">pixels</text>
+
+  <rect x="110" y="174" width="440" height="128" rx="10" fill="url(#hatch)" stroke="#4A6A8C" stroke-width="2"/>
+  <text x="330" y="206" text-anchor="middle" font-size="19" font-weight="bold" fill="#1F3A57">MedSigLIP — Vision Encoder</text>
+  <text x="330" y="231" text-anchor="middle" font-size="15.5" fill="#1F3A57">(vision_tower do MedGemma 4B)</text>
+  <text x="330" y="255" text-anchor="middle" font-size="15.5" fill="#1F3A57">ViT · 27 blocos Transformer · ~400M parâmetros</text>
+  <!-- cadeado -->
+  <g transform="translate(213,266)">
+    <rect x="0" y="9" width="16" height="13" rx="2" fill="#4A6A8C"/>
+    <path d="M3,10 V6 a5,5 0 0 1 10,0 V10" fill="none" stroke="#4A6A8C" stroke-width="2.4"/>
+  </g>
+  <text x="237" y="287" font-size="15.5" font-weight="bold" fill="#4A6A8C">CONGELADO</text>
+  <text x="345" y="287" font-size="14" fill="#4A6A8C">(sem gradiente)</text>
+
+  <line x1="330" y1="302" x2="330" y2="330" stroke="#333" stroke-width="1.8" marker-end="url(#arr)"/>
+  <text x="340" y="322" font-size="13.5" fill="#555">tokens × 1152</text>
+
+  <rect x="180" y="332" width="300" height="46" rx="8" fill="url(#hatch)" stroke="#4A6A8C" stroke-width="1.6"/>
+  <text x="330" y="361" text-anchor="middle" font-size="16" fill="#1F3A57">Mean pooling dos tokens → 1152-d</text>
+
+  <!-- anotação de cache -->
+  <g>
+    <line x1="480" y1="355" x2="556" y2="355" stroke="#888" stroke-width="1.3" stroke-dasharray="4 3"/>
+    <rect x="556" y="331" width="196" height="48" rx="24" fill="#FFFFFF" stroke="#888" stroke-width="1.3" stroke-dasharray="4 3"/>
+    <text x="654" y="351" text-anchor="middle" font-size="13.5" fill="#555">embeddings pré-computados</text>
+    <text x="654" y="369" text-anchor="middle" font-size="13.5" fill="#555">1× e mantidos em cache</text>
+  </g>
+
+  <!-- ============ Região treinável ============ -->
+  <rect x="88" y="398" width="1024" height="440" rx="16" fill="none" stroke="#C47A12" stroke-width="1.8" stroke-dasharray="9 6"/>
+  <rect x="440" y="388" width="320" height="22" fill="#FFFFFF"/>
+  <text x="600" y="404" text-anchor="middle" font-size="15" font-weight="bold" fill="#C47A12">CABEÇA TREINÁVEL (~330k parâmetros)</text>
+
+  <line x1="330" y1="378" x2="330" y2="428" stroke="#333" stroke-width="1.8" marker-end="url(#arr)"/>
+  <line x1="870" y1="138" x2="870" y2="428" stroke="#333" stroke-width="1.8" marker-end="url(#arr)"/>
+  <text x="880" y="280" font-size="13.5" fill="#555">10-d</text>
+
+  <rect x="110" y="430" width="440" height="104" rx="10" fill="#FFF3DF" stroke="#C47A12" stroke-width="2"/>
+  <text x="330" y="460" text-anchor="middle" font-size="18" font-weight="bold" fill="#5A3A08">Projeção visual</text>
+  <text x="330" y="486" text-anchor="middle" font-size="15.5" fill="#3A2A10">LayerNorm(1152) → Linear 1152→256</text>
+  <text x="330" y="510" text-anchor="middle" font-size="15.5" fill="#3A2A10">GELU → Dropout(0,1)</text>
+
+  <rect x="650" y="430" width="440" height="104" rx="10" fill="#FFF3DF" stroke="#C47A12" stroke-width="2"/>
+  <text x="870" y="460" text-anchor="middle" font-size="18" font-weight="bold" fill="#5A3A08">Encoder de metadados (MLP)</text>
+  <text x="870" y="486" text-anchor="middle" font-size="15.5" fill="#3A2A10">Linear 10→128 → GELU</text>
+  <text x="870" y="510" text-anchor="middle" font-size="15.5" fill="#3A2A10">Linear 128→256 → GELU → Dropout(0,1)</text>
+
+  <!-- convergência -->
+  <path d="M330,534 V572 Q330,584 342,584 H448" fill="none" stroke="#333" stroke-width="1.8" marker-end="url(#arr)"/>
+  <path d="M870,534 V572 Q870,584 858,584 H752" fill="none" stroke="#333" stroke-width="1.8" marker-end="url(#arr)"/>
+  <text x="340" y="560" font-size="13.5" fill="#555">256-d</text>
+  <text x="880" y="560" font-size="13.5" fill="#555">256-d</text>
+
+  <rect x="450" y="560" width="300" height="48" rx="24" fill="#FFF3DF" stroke="#C47A12" stroke-width="2"/>
+  <text x="600" y="590" text-anchor="middle" font-size="16.5" font-weight="bold" fill="#5A3A08">Concatenação → 512-d</text>
+
+  <line x1="600" y1="608" x2="600" y2="666" stroke="#333" stroke-width="1.8" marker-end="url(#arr)"/>
+  <text x="610" y="642" font-size="13.5" fill="#555">512-d</text>
+
+  <rect x="380" y="668" width="440" height="104" rx="10" fill="#FFF3DF" stroke="#C47A12" stroke-width="2"/>
+  <text x="600" y="698" text-anchor="middle" font-size="18" font-weight="bold" fill="#5A3A08">Cabeça de classificação</text>
+  <text x="600" y="724" text-anchor="middle" font-size="15.5" fill="#3A2A10">Linear 512→256 → GELU → Dropout(0,2)</text>
+  <text x="600" y="748" text-anchor="middle" font-size="15.5" fill="#3A2A10">Linear 256→5 → logits</text>
+
+  <!-- ============ Saída ============ -->
+  <line x1="600" y1="772" x2="600" y2="866" stroke="#333" stroke-width="1.8" marker-end="url(#arr)"/>
+  <text x="610" y="800" font-size="13.5" fill="#555">logits (5)</text>
+
+  <!-- Focal loss (treino) -->
+  <path d="M820,720 H1140 V880 H1060" fill="none" stroke="#888" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#arrg)"/>
+  <rect x="852" y="852" width="208" height="88" rx="10" fill="#FFFFFF" stroke="#888" stroke-width="1.4" stroke-dasharray="5 4"/>
+  <text x="956" y="876" text-anchor="middle" font-size="15" font-weight="bold" fill="#444">Treino: Focal Loss</text>
+  <text x="956" y="898" text-anchor="middle" font-size="13.5" fill="#444">γ = 2 · α = inverse_sqrt</text>
+  <text x="956" y="918" text-anchor="middle" font-size="13.5" fill="#444">label smoothing = 0,05</text>
+
+  <rect x="450" y="868" width="300" height="48" rx="10" fill="#F4F4F4" stroke="#555" stroke-width="1.6"/>
+  <text x="600" y="898" text-anchor="middle" font-size="16.5" font-weight="bold" fill="#222">Softmax → argmax</text>
+
+  <!-- limiar opcional -->
+  <line x1="450" y1="892" x2="362" y2="892" stroke="#888" stroke-width="1.3" stroke-dasharray="4 3"/>
+  <rect x="120" y="864" width="242" height="56" rx="10" fill="#FFFFFF" stroke="#888" stroke-width="1.3" stroke-dasharray="4 3"/>
+  <text x="241" y="887" text-anchor="middle" font-size="13.5" fill="#555">Opcional: prediz MEL se</text>
+  <text x="241" y="907" text-anchor="middle" font-size="13.5" fill="#555">P(MEL) ≥ τ (calibrado na validação)</text>
+
+  <line x1="600" y1="916" x2="600" y2="950" stroke="#333" stroke-width="1.8" marker-end="url(#arr)"/>
+
+  <!-- classes -->
+  <g font-size="16" font-weight="bold" text-anchor="middle">
+    <rect x="190" y="952" width="140" height="40" rx="8" fill="#F4F4F4" stroke="#555" stroke-width="1.4"/>
+    <text x="260" y="978" fill="#222">BCC</text>
+    <rect x="350" y="952" width="140" height="40" rx="8" fill="#F4F4F4" stroke="#555" stroke-width="1.4"/>
+    <text x="420" y="978" fill="#222">NEV</text>
+    <rect x="510" y="952" width="180" height="40" rx="8" fill="#FBE3E0" stroke="#B03A2E" stroke-width="2"/>
+    <text x="600" y="978" fill="#8E2A20">MEL</text>
+    <rect x="710" y="952" width="140" height="40" rx="8" fill="#F4F4F4" stroke="#555" stroke-width="1.4"/>
+    <text x="780" y="978" fill="#222">SK</text>
+    <rect x="870" y="952" width="140" height="40" rx="8" fill="#F4F4F4" stroke="#555" stroke-width="1.4"/>
+    <text x="940" y="978" fill="#222">MISC</text>
+  </g>
+  <g font-size="12.5" text-anchor="middle" fill="#555">
+    <text x="260" y="1010">Carcinoma basocelular</text>
+    <text x="420" y="1010">Nevo</text>
+    <text x="600" y="1010">Melanoma</text>
+    <text x="780" y="1010">Ceratose seborreica</text>
+    <text x="940" y="1010">Outras lesões</text>
+  </g>
+
+  <!-- ============ Legenda ============ -->
+  <g font-size="13.5" fill="#444">
+    <rect x="190" y="1040" width="26" height="18" rx="3" fill="url(#hatch)" stroke="#4A6A8C" stroke-width="1.4"/>
+    <text x="224" y="1054">Pesos congelados (pré-treinados)</text>
+    <rect x="470" y="1040" width="26" height="18" rx="3" fill="#FFF3DF" stroke="#C47A12" stroke-width="1.4"/>
+    <text x="504" y="1054">Camadas treinadas</text>
+    <line x1="690" y1="1049" x2="718" y2="1049" stroke="#888" stroke-width="1.4" stroke-dasharray="5 4"/>
+    <text x="726" y="1054">Apenas no treino / pós-processamento</text>
+  </g>
+</svg>
