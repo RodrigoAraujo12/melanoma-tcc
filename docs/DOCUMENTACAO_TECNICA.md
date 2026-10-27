@@ -127,7 +127,7 @@ Desenvolver e avaliar um modelo de inteligência artificial multimodal capaz de 
 | **v7** | Derm7pt + HAM10000 | Corte profundo NEV (1,4k) + threshold MEL | **73,7%** (MEL recall 66%) ✅ |
 | **v8** | Derm7pt + HAM10000 | Unfreeze de 2 blocos do encoder + sampler | val macro-F1 0,56 (overfit, ✗ pior que v7) |
 
-> Accuracy reportada no **test do Derm7pt** (395 amostras), comparável entre todas as versões. A partir do v5 os números refletem treino mesclado com HAM10000, mas o test permanece só Derm7pt. O **v7 é o modelo final**; o v8 (unfreeze) foi um experimento com resultado negativo. O v7 foi ainda validado por **5-fold CV** (76,2% ± 2,0%) — ver seção final.
+> Accuracy reportada no **test do Derm7pt** (395 amostras), comparável entre todas as versões. A partir do v5 os números refletem treino mesclado com HAM10000, mas o test permanece só Derm7pt. O **v7 é o modelo final**; o v8 (unfreeze) foi um experimento com resultado negativo. O v7 foi ainda validado por **5-fold CV** (75,7% ± 2,9%) — ver seção final.
 
 ---
 
@@ -301,7 +301,7 @@ Abandonar o paradigma generativo. Usar apenas o **vision encoder** do MedGemma (
 - **Vision encoder:** Extraído de `google/medgemma-4b-it.vision_tower` (~400M params), congelado
 - **Metadata encoder:** MLP simples (13→128→256) com GELU + Dropout
 - **Classification head:** Linear(512→256→5) com Dropout 0.2
-- **Total trainable params:** ~330k (de ~400M totais → ~0.08%)
+- **Total trainable params:** ~465k (464.901 com metadata 13-dim no v3/v4; 464.517 com 10-dim no v5+) de ~400M → ~0,12%
 - **Metadata features (13 dim one-hot):**
   - sex: 2 categorias (female, male)
   - location: 8 categorias (abdomen, back, head neck, upper limbs, lower limbs, acral, buttocks, chest)
@@ -327,7 +327,7 @@ Abandonar o paradigma generativo. Usar apenas o **vision encoder** do MedGemma (
 3. **Encoder congelado:** Aproveita conhecimento médico do MedSigLIP sem risco de catastrophic forgetting
 4. **Tabular branch:** Metadados estruturados são processados como categóricos, não interpretados como linguagem
 5. **Sem geração de texto:** Elimina mode collapse e respostas truncadas
-6. **Apenas 330k params treináveis:** Treino rápido (~30 min) e baixo risco de overfit
+6. **Apenas ~465k params treináveis:** Treino rápido (~30 min) e baixo risco de overfit
 
 #### Resultados
 
@@ -380,7 +380,7 @@ O modelo distribui predições de forma alinhada à distribuição real (não h�
 | Predições válidas | 100% | 20% | **100%** |
 | Mode collapse | Total | Parcial | **Não** |
 | Tempo de treino | ~2h | ~2h | **~30 min** |
-| Params treináveis | ~10M (LoRA) | ~5M (LoRA leve) | **330k (head)** |
+| Params treináveis | ~10M (LoRA) | ~5M (LoRA leve) | **~465k (head)** |
 
 ---
 
@@ -566,7 +566,7 @@ Testar se descongelar os **2 últimos blocos transformer** do encoder MedSigLIP 
 
 #### Configuração
 
-- **Unfreeze:** apenas os 2 últimos de 27 blocos (`encoder.layers[-2:]` do `SiglipVisionModel`) — 30,5M params treináveis (7,4% do total), vs ~330k da cabeça isolada.
+- **Unfreeze:** apenas os 2 últimos de 27 blocos (`encoder.layers[-2:]` do `SiglipVisionModel`) — 30,5M params treináveis (7,4% do total), vs ~465k da cabeça isolada.
 - **LR discriminativo:** cabeça `5e-4`, blocos do encoder `1e-5` (LR alto destruiria o pré-treino médico). Param groups separados no AdamW.
 - **Sem cache de embeddings:** descongelar invalida o cache (o encoder muda a cada época). Augmentation reativada no train.
 - **`WeightedRandomSampler`:** mantém todos os dados (corte NEV=1400) mas balanceia os batches, em vez de descartar mais NEV. Class weights da loss mantidos.
@@ -609,34 +609,36 @@ Os conjuntos do Derm7pt são pequenos (val 203, test 395) e uma métrica de spli
 - **TTA:** original + 4 views aumentadas (flip/rotação/brilho/contraste), média das probabilidades softmax.
 - Épocas fixas (25, onde o v7 convergia) — reprodutível, sem seleção no test.
 
+> **Nota sobre os números do 5-fold:** os valores abaixo são da execução que gerou a matriz de confusão agregada (commit `5c7762f`). A primeira execução (commit `6bba284`) deu 0,762 ± 0,020; a diferença vem da inicialização da cabeça, que não tinha semente fixa no notebook 09. O notebook 10 passa a fixar sementes e repete cada configuração com 3 sementes.
+
 #### Resultados (média ± desvio, 5 folds)
 
 | Métrica | PLAIN | TTA |
 |---|---|---|
-| **Accuracy** | **0,762 ± 0,020** | 0,745 ± 0,020 |
-| Macro-F1 | 0,636 ± 0,053 | 0,646 ± 0,033 |
-| MEL recall | 0,667 ± 0,056 | **0,723 ± 0,043** |
-| MEL precision | 0,712 ± 0,048 | 0,659 ± 0,055 |
+| **Accuracy** | **0,757 ± 0,029** | 0,748 ± 0,025 |
+| Macro-F1 | 0,635 ± 0,060 | 0,644 ± 0,030 |
+| MEL recall | 0,663 ± 0,044 | **0,723 ± 0,035** |
+| MEL precision | 0,696 ± 0,054 | 0,655 ± 0,061 |
 
 **F1 por classe (PLAIN → TTA):**
 
 | Classe | PLAIN | TTA |
 |---|---|---|
-| BCC | 0,552 ± **0,202** | 0,661 ± 0,103 |
-| NEV | 0,850 ± 0,014 | 0,832 ± 0,017 |
-| MEL | 0,687 ± 0,036 | 0,688 ± 0,035 |
-| SK | 0,482 ± 0,067 | 0,485 ± 0,081 |
-| MISC | 0,610 ± 0,068 | 0,566 ± 0,047 |
+| BCC | 0,546 ± **0,197** | 0,627 ± 0,071 |
+| NEV | 0,844 ± 0,021 | 0,837 ± 0,021 |
+| MEL | 0,678 ± 0,039 | 0,686 ± 0,039 |
+| SK | 0,486 ± 0,081 | 0,483 ± 0,068 |
+| MISC | 0,618 ± 0,076 | 0,590 ± 0,055 |
 
 #### Análise
 
-- **Número robusto:** o v7 atinge **76,2% ± 2,0%** de accuracy em 5-fold. Fica acima do single-split oficial (73,7%) porque cada fold treina em ~808 casos (4/5) contra 413+203 do split oficial — **mais dados de treino por fold**. Ambos são válidos: o **73,7% é o comparável à literatura** (mesmo split oficial); o **76,2% ± 2,0% é a estimativa robusta**.
-- **NEV é estável** (0,850 ± 0,014); **BCC é altamente variável** (0,552 ± **0,202**) — cada fold de test tem só ~8 BCC, então um erro move muito o F1. É limitação intrínseca ao **suporte pequeno**, não instabilidade do modelo.
-- **TTA não é ganho líquido de accuracy** (−1,7pt; macro-F1 +0,01 está dentro do ruído), mas é um **lever de sensibilidade a melanoma**: MEL recall +5,6pt (66,7 → 72,3%), ao custo de precisão (−5,3pt). Também **estabiliza o BCC** (F1 0,552→0,661; desvio 0,20→0,10).
+- **Número robusto:** o v7 atinge **75,7% ± 2,9%** de accuracy em 5-fold. Fica acima do single-split oficial (73,7%) porque cada fold treina em ~808 casos (4/5) contra 413+203 do split oficial — **mais dados de treino por fold**. Ambos são válidos: o **73,7% é o comparável à literatura** (mesmo split oficial); o **75,7% ± 2,9% é a estimativa robusta**.
+- **NEV é estável** (0,844 ± 0,021); **BCC é altamente variável** (0,546 ± **0,197**) — cada fold de test tem só ~8 BCC, então um erro move muito o F1. É limitação intrínseca ao **suporte pequeno**, não instabilidade do modelo.
+- **TTA não é ganho líquido de accuracy** (−0,9pt; macro-F1 +0,01 está dentro do ruído), mas é um **lever de sensibilidade a melanoma**: MEL recall +6,0pt (66,3 → 72,3%), ao custo de precisão (−4,1pt). Também **estabiliza o BCC** (F1 0,546→0,627; desvio 0,197→0,071).
 
 #### Conclusão
 
-O v7 é robusto (**76,2% ± 2,0%** em 5-fold). O trabalho oferece **dois levers de sensibilidade a melanoma** — threshold conservador e TTA — ambos trocando precisão por recall, com o ponto de operação a critério clínico. A alta variância do BCC entre folds é reportada honestamente como limitação de suporte amostral, não como falha do modelo.
+O v7 é robusto (**75,7% ± 2,9%** em 5-fold). O trabalho oferece **dois levers de sensibilidade a melanoma** — threshold conservador e TTA — ambos trocando precisão por recall, com o ponto de operação a critério clínico. A alta variância do BCC entre folds é reportada honestamente como limitação de suporte amostral, não como falha do modelo.
 
 ---
 
@@ -648,11 +650,11 @@ Comparação no **diagnóstico multiclasse (5 classes)** do Derm7pt — a mesma 
 |---|---|---|---|
 | **DermFormer** (2025) | ViT multimodal aninhado | **77,9%** | tri-modal (derm + clínica + meta) |
 | **SkinM2Former** (Yan et al., 2024) | Swin tri-modal + 7-pt checklist | **77,85%** | usa o 7-point checklist |
-| **Este trabalho v7** | MedSigLIP + head + merge HAM10000 | **73,7%** (5-fold: 76,2% ± 2,0%) | só imagem derm + metadados básicos, encoder congelado |
+| **Este trabalho v7** | MedSigLIP + head + merge HAM10000 | **73,7%** (5-fold: 75,7% ± 2,9%) | só imagem derm + metadados básicos, encoder congelado |
 | **Este trabalho v3** | MedSigLIP + classification head | 69% | só Derm7pt, sem merge |
 | Random baseline (5 classes) | — | ~20% | — |
 
-**Posicionamento:** no cenário multiclasse (mais difícil e clinicamente mais informativo), o v7 fica a **~4 pontos** dos melhores resultados recentes (~77–78%: DermFormer, SkinM2Former), que usam **modalidades adicionais** (imagem clínica, metadados ricos e/ou o 7-point checklist). Este trabalho usa apenas a imagem dermatoscópica + metadados demográficos básicos, com encoder congelado e cabeça pequena. O **73,7%** é no split oficial (comparável às linhas acima); o 5-fold dá **76,2% ± 2,0%** (mais dados por fold, protocolo diferente).
+**Posicionamento:** no cenário multiclasse (mais difícil e clinicamente mais informativo), o v7 fica a **~4 pontos** dos melhores resultados recentes (~77–78%: DermFormer, SkinM2Former), que usam **modalidades adicionais** (imagem clínica, metadados ricos e/ou o 7-point checklist). Este trabalho usa apenas a imagem dermatoscópica + metadados demográficos básicos, com encoder congelado e cabeça pequena. O **73,7%** é no split oficial (comparável às linhas acima); o 5-fold dá **75,7% ± 2,9%** (mais dados por fold, protocolo diferente).
 
 > ⚠️ **Cuidado com números "90%+".** Vários trabalhos reportam accuracy ≥ 90% no Derm7pt (ex.: MDSIS-Net, 90,7%), mas medem a tarefa **binária** (melanoma vs não-melanoma) ou a média dos critérios do 7-point checklist — tarefas mais fáceis (chance level 50% vs 20%). **Não são comparáveis** ao diagnóstico 5-classes. A comparação honesta é 5-classes contra 5-classes.
 
@@ -750,7 +752,7 @@ Combina três vantagens:
 
 - MedSigLIP já foi pré-treinado em imagens médicas
 - Treinar com poucos dados (de 413 a ~4,6k amostras) risca catastrophic forgetting
-- Reduz drasticamente params treináveis (~330k vs ~400M)
+- Reduz drasticamente params treináveis (~465k vs ~400M)
 - Treino estável em 15 epochs
 - **Confirmado empiricamente no v8:** descongelar 2 blocos (30,5M params) overfittou e piorou o macro-F1 (0,56 vs 0,72 no val). A decisão de congelar não foi só conveniência — é a escolha correta para o regime de dados.
 
@@ -794,7 +796,8 @@ e:\Projeto_TCC\
 │   ├── 06_combined_balanced.ipynb   # v6: corte de NEV + cache de embeddings
 │   ├── 07_combined_threshold.ipynb  # v7: corte profundo NEV + threshold MEL
 │   ├── 08_unfreeze_2blocks.ipynb    # v8: unfreeze de 2 blocos + AMP (negativo)
-│   └── 09_kfold_tta.ipynb           # v7: validação cruzada 5-fold + TTA
+│   ├── 09_kfold_tta.ipynb           # v7: validação cruzada 5-fold + TTA
+│   └── 10_ablacao_hiperparametros.ipynb  # v7: ablação de modalidades + sensibilidade de hiperparâmetros
 ├── release_v0/                      # Derm7pt dataset (não comitado, gitignored)
 │   ├── images/                      # 34 subpastas, 2022 imagens (1011 dermatoscópicas + 1011 clínicas)
 │   └── meta/
