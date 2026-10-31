@@ -68,7 +68,7 @@
   <!-- ============ Região treinável ============ -->
   <rect x="88" y="398" width="1024" height="440" rx="16" fill="none" stroke="#C47A12" stroke-width="1.8" stroke-dasharray="9 6"/>
   <rect x="440" y="388" width="320" height="22" fill="#FFFFFF"/>
-  <text x="600" y="404" text-anchor="middle" font-size="15" font-weight="bold" fill="#C47A12">CABEÇA TREINÁVEL (~330k parâmetros)</text>
+  <text x="600" y="404" text-anchor="middle" font-size="15" font-weight="bold" fill="#C47A12">CABEÇA TREINÁVEL (~465k parâmetros)</text>
 
   <line x1="330" y1="378" x2="330" y2="428" stroke="#333" stroke-width="1.8" marker-end="url(#arr)"/>
   <line x1="870" y1="138" x2="870" y2="428" stroke="#333" stroke-width="1.8" marker-end="url(#arr)"/>
