@@ -24,6 +24,7 @@ Período: Maio–Junho 2026
    - [v7 — Corte profundo de NEV + threshold conservador para MEL](#v7--corte-profundo-de-nev--threshold-conservador-para-mel)
    - [v8 — Unfreeze dos 2 últimos blocos do SigLIP (resultado negativo)](#v8--unfreeze-dos-2-últimos-blocos-do-siglip-resultado-negativo)
    - [Validação cruzada (5-fold) + TTA — caracterização final do v7](#validação-cruzada-5-fold--tta--caracterização-final-do-v7)
+   - [Ablação de modalidades + sensibilidade de hiperparâmetros](#ablação-de-modalidades--sensibilidade-de-hiperparâmetros)
 5. [Comparação com a Literatura](#5-comparação-com-a-literatura)
 6. [Problemas Técnicos Enfrentados](#6-problemas-técnicos-enfrentados)
 7. [Decisões Arquiteturais Importantes](#7-decisões-arquiteturais-importantes)
@@ -127,7 +128,7 @@ Desenvolver e avaliar um modelo de inteligência artificial multimodal capaz de 
 | **v7** | Derm7pt + HAM10000 | Corte profundo NEV (1,4k) + threshold MEL | **73,7%** (MEL recall 66%) ✅ |
 | **v8** | Derm7pt + HAM10000 | Unfreeze de 2 blocos do encoder + sampler | val macro-F1 0,56 (overfit, ✗ pior que v7) |
 
-> Accuracy reportada no **test do Derm7pt** (395 amostras), comparável entre todas as versões. A partir do v5 os números refletem treino mesclado com HAM10000, mas o test permanece só Derm7pt. O **v7 é o modelo final**; o v8 (unfreeze) foi um experimento com resultado negativo. O v7 foi ainda validado por **5-fold CV** (75,7% ± 2,9%) — ver seção final.
+> Accuracy reportada no **test do Derm7pt** (395 amostras), comparável entre todas as versões. A partir do v5 os números refletem treino mesclado com HAM10000, mas o test permanece só Derm7pt. O **v7 é o modelo final**; o v8 (unfreeze) foi um experimento com resultado negativo. O v7 foi ainda validado por **5-fold CV** (75,7% ± 2,9%) e submetido a **ablação de modalidades** e **análise de sensibilidade de hiperparâmetros** — ver seções finais.
 
 ---
 
@@ -534,6 +535,8 @@ accuracy **73,7%** | macro-F1 **0,612** — **melhor modelo do trabalho**.
 
 **Progressão do corte de NEV (MEL recall, mesmo test):** v4 sem HAM 50% → v6 corte 2k 61% → **v7 corte 1,4k 66%**. Cada aperto no NEV subiu o recall de melanoma, **sem derrubar o NEV** (F1 NEV 0,832 → 0,843).
 
+> ⚠️ **Não confirmado em 5-fold.** Na análise de sensibilidade (notebook 10), cortar mais NEV **não** aumentou o MEL recall: sem corte ele foi a 73,4% (vs 65,2% com corte 1.400), e o corte 1.000 piorou o macro-F1 em 5/5 dobras. A progressão acima, medida num único split, reflete em parte ruído amostral (5 pontos de recall = 5 melanomas).
+
 #### Análise de sensibilidade do threshold (calibração no val)
 
 | τ | MEL recall | MEL precision | macro-F1 | accuracy |
@@ -554,7 +557,7 @@ accuracy **73,7%** | macro-F1 **0,612** — **melhor modelo do trabalho**.
 
 - **Modelo final reportado: v7 argmax** (73,7% accuracy, MEL recall 66%, macro-F1 0,612).
 - O sweep de threshold é apresentado como **análise de sensibilidade**, demonstrando que o ponto de operação é ajustável conforme a prioridade clínica.
-- Cortar NEV abaixo de 1.400 não compensa: o ganho de macro-F1 já estava platôando (v6 0,608 → v7 0,612). O lever seguinte seria qualidade de features — testado no v8 (unfreeze), com resultado negativo.
+- Cortar NEV abaixo de 1.400 não compensa: o ganho de macro-F1 já estava platôando (v6 0,608 → v7 0,612); a análise de sensibilidade em 5-fold confirmou que o corte 1.000 piora o macro-F1. O lever seguinte seria qualidade de features — testado no v8 (unfreeze), com resultado negativo.
 
 ---
 
@@ -639,6 +642,90 @@ Os conjuntos do Derm7pt são pequenos (val 203, test 395) e uma métrica de spli
 #### Conclusão
 
 O v7 é robusto (**75,7% ± 2,9%** em 5-fold). O trabalho oferece **dois levers de sensibilidade a melanoma** — threshold conservador e TTA — ambos trocando precisão por recall, com o ponto de operação a critério clínico. A alta variância do BCC entre folds é reportada honestamente como limitação de suporte amostral, não como falha do modelo.
+
+### Ablação de modalidades + sensibilidade de hiperparâmetros
+
+Notebook: `notebooks/10_ablacao_hiperparametros.ipynb` · resultados brutos: `results/v7-ablacao/`
+
+#### Motivação
+
+Duas questões levantadas pelo orientador na revisão do texto:
+
+1. **Origem dos hiperparâmetros:** foram tirados da literatura ou de algum processo de tuning?
+2. **Necessidade da arquitetura multimodal:** os metadados trazem ganho real sobre a imagem, ou só a imagem já resolve?
+
+#### Protocolo
+
+- Mesmas 5 dobras do notebook 09 (`StratifiedKFold`, `random_state=42`), cabeça treinada em 4/5 Derm7pt + HAM (corte NEV=1400), 25 épocas fixas, AdamW + CosineAnnealingLR.
+- **3 sementes × 5 dobras = 15 execuções** por configuração (o notebook 09 não fixava semente; aqui a inicialização é controlada).
+- Reporta-se média das 15 execuções ± desvio entre as 5 dobras (após média das sementes).
+- Comparação **pareada** com o v7 (mesma dobra e semente): nº de dobras com o mesmo sinal + Wilcoxon sobre as 15 execuções. Como execuções da mesma dobra não são independentes, o p-valor é indicativo; o critério principal é a consistência entre dobras.
+- Embeddings do HAM train **completo** (8.303 imagens) cacheados uma vez; o corte de NEV é feito por índice. Tempo total no T4: ~2h20 (77 min de cache + 10 min parte A + 52 min parte B).
+
+#### Parte A — Ablação de modalidades
+
+Variantes unimodais **removem** o ramo ausente (o classificador recebe 256-d em vez de 512-d); nada é zerado.
+
+| Configuração | Params | Accuracy | Macro-F1 | MEL recall | MEL precision |
+|---|---|---|---|---|---|
+| **Multimodal (v7)** | 464.517 | **0,757 ± 0,018** | **0,642 ± 0,040** | **0,652 ± 0,052** | **0,694 ± 0,048** |
+| Só imagem | 364.549 | 0,744 ± 0,018 | 0,615 ± 0,043 | 0,648 ± 0,037 | 0,682 ± 0,060 |
+| Multimodal, metadados permutados no teste | 464.517 | 0,740 ± 0,023 | 0,605 ± 0,045 | 0,642 ± 0,024 | 0,677 ± 0,063 |
+| Só metadados | 101.509 | 0,504 ± 0,045 | 0,227 ± 0,044 | 0,198 ± 0,063 | 0,293 ± 0,100 |
+| Classe majoritária (sempre NEV) | — | 0,569 | 0,145 | 0,000 | — |
+
+**F1 por classe (média das 15 execuções):**
+
+| Classe | Multimodal | Só imagem | Só metadados | Metadados permutados |
+|---|---|---|---|---|
+| BCC | **0,588** | 0,535 | 0,000 | 0,493 |
+| NEV | **0,846** | 0,838 | 0,698 | 0,838 |
+| MEL | **0,671** | 0,663 | 0,235 | 0,657 |
+| SK | **0,506** | 0,466 | 0,143 | 0,505 |
+| MISC | **0,599** | 0,574 | 0,057 | 0,532 |
+
+**Análise:**
+- **A imagem é a fonte primária** (74,4% sozinha). Os metadados sozinhos ficam abaixo da classe majoritária em accuracy (a ponderação de classes desloca predições para as minoritárias), mas o macro-F1 0,227 > 0,145 mostra algum sinal em sexo + localização.
+- **Multimodal > só imagem de forma consistente:** macro-F1 **+0,027 em 5/5 dobras** (p=0,003), accuracy +1,3pt em 4/5 (p=0,004). O ganho está nas **classes pequenas** (BCC +0,053, SK +0,040, MISC +0,025); NEV e MEL mudam < 0,01, e o MEL recall não muda (p=0,72).
+- **Permutação confirma que o modelo usa os metadados:** embaralhar os metadados entre os casos de teste derruba o macro-F1 de 0,642 para 0,605 em 5/5 dobras. Fica até abaixo do "só imagem", já que um metadado errado induz erro num modelo treinado para combiná-los.
+- **Conclusão:** a arquitetura multimodal é justificada, com ganho **modesto e complementar** (~100k params a mais). Metadados mais ricos (idade, fototipo, histórico), descartados pela compatibilidade Derm7pt × HAM, provavelmente ampliariam a contribuição.
+
+#### Parte B — Sensibilidade de hiperparâmetros (one-at-a-time)
+
+Referência: LR 5e-4, 25 épocas, γ=2, smoothing 0,05, pesos `inverse_sqrt`, corte NEV 1.400.
+
+| Parâmetro | Valor | Accuracy | Macro-F1 | MEL rec | MEL prec | Δ macro-F1 (dobras c/ mesmo sinal) |
+|---|---|---|---|---|---|---|
+| *Referência (v7)* | | 0,757 | 0,642 | 0,652 | 0,694 | — |
+| LR | 1e-4 | 0,720 | 0,546 | 0,599 | 0,648 | −0,096 (4/5) |
+| | 1e-3 | **0,779** | **0,681** | 0,696 | **0,735** | **+0,039 (5/5)** |
+| Épocas | 15 | 0,749 | 0,608 | 0,632 | 0,703 | −0,034 (5/5) |
+| | 40 | 0,767 | 0,666 | 0,678 | 0,715 | +0,024 (5/5) |
+| γ Focal Loss | 0 (CE) | 0,760 | 0,641 | 0,648 | 0,704 | −0,001 (3/5) |
+| | 1 | 0,761 | 0,646 | 0,651 | 0,703 | +0,004 (4/5) |
+| | 3 | 0,753 | 0,636 | 0,652 | 0,690 | −0,006 (3/5) |
+| Label smoothing | 0 | 0,756 | 0,642 | 0,652 | 0,697 | 0,000 (—) |
+| | 0,1 | 0,757 | 0,643 | 0,654 | 0,693 | +0,001 (3/5) |
+| Pesos de classe | nenhum | 0,761 | 0,631 | 0,644 | 0,709 | −0,011 (4/5) |
+| | `inverse` | 0,755 | 0,647 | 0,674 | 0,696 | +0,005 (3/5) |
+| Corte NEV | 1.000 | 0,755 | 0,624 | 0,639 | 0,710 | −0,018 (5/5) |
+| | 1.800 | 0,756 | 0,640 | 0,667 | 0,698 | −0,002 (2/5) |
+| | sem corte | 0,755 | 0,658 | **0,734** | 0,658 | +0,016 (5/5) |
+
+**Análise — três grupos:**
+1. **Insensíveis: γ e label smoothing.** Nenhuma variação mexe o macro-F1 em mais de 0,006 e o sinal não se mantém entre dobras. **γ=0 (entropia cruzada ponderada) é equivalente à Focal Loss** — com features congeladas e class weights explícitos, o termo focal não traz ganho mensurável; quem trata o desbalanceamento é a ponderação.
+2. **Tratamento do desbalanceamento: pesos e corte de NEV.** Tirar os pesos custa −0,011 de macro-F1 (4/5). O corte de NEV **contradiz a progressão do single-split**: cortar mais (1.000) piora em 5/5 dobras, e **sem corte** o MEL recall sobe para 73,4% (+8,2pt, 5/5) com precisão −3,6pt. Hipótese: com mais NEV no treino, o `inverse_sqrt` (calculado sobre as contagens) já dá peso relativo maior às minoritárias.
+3. **Orçamento de treino: LR e épocas — os de maior efeito.** LR 1e-3 (+0,039) e 40 épocas (+0,024) melhoram em 5/5 dobras: com Cosine e 25 épocas fixas a cabeça **não converge totalmente**. No split oficial o efeito é menor (até 40 épocas + early stopping), mas os números do 5-fold são **conservadores**.
+
+**Conclusões:**
+- O desempenho **não depende de ajuste fino** da loss (γ e smoothing são irrelevantes nesta faixa).
+- A configuração do v7 **não é um ótimo local** (LR 1e-3, 40 épocas e sem corte de NEV são melhores em alguma métrica).
+- **O modelo final não foi trocado**: essas configurações foram encontradas olhando os próprios dados de avaliação; adotá-las exigiria seleção em **validação cruzada aninhada**. Registrado como limitação no TCC e como trabalho futuro (9.8).
+
+#### Resposta às questões do orientador (como foi para o TCC)
+
+- **Hiperparâmetros:** não houve busca sistemática (val do Derm7pt pequeno demais: 203 casos, < 20 BCC/SK). Origem: literatura (γ=2 de Lin et al. 2017; smoothing 0,05 = metade do 0,1 de Szegedy et al. 2016; AdamW com wd padrão 0,01), convenções de linear probing (LR 5e-4, batch 32, scheduler/early stopping) e decisões iterativas v4–v7 (pesos `inverse_sqrt`, corte NEV). A análise de sensibilidade acima entra como Seção 4.8 do TCC.
+- **Multimodal:** ablação acima entra como Seção 4.7 do TCC.
 
 ---
 
@@ -743,6 +830,8 @@ O paradigma generativo (que QLoRA fine-tuna) provou ser inadequado para classifi
 
 ### 7.3 Por que Focal Loss
 
+> **Atualização (notebook 10):** na análise de sensibilidade, γ=0 (entropia cruzada ponderada) e label smoothing 0 ou 0,1 deram resultado equivalente ao v7 (|Δ macro-F1| ≤ 0,006). Com features congeladas, o componente efetivo é a **ponderação de classes (α)**; o termo focal e o smoothing são inofensivos, mas não fazem diferença mensurável. A justificativa abaixo era a motivação original.
+
 Combina três vantagens:
 1. **Class weights** (α): compensa desbalanceamento
 2. **Focusing factor** (γ=2): foca em exemplos difíceis (especificamente MEL heterogêneo)
@@ -805,6 +894,8 @@ e:\Projeto_TCC\
 │       ├── train_indexes.csv        # 413 indices
 │       ├── valid_indexes.csv        # 203 indices
 │       └── test_indexes.csv         # 395 indices
+├── results/
+│   └── v7-ablacao/                  # CSVs do notebook 10 (por dobra/semente + tabelas resumo)
 ├── docs/
 │   └── DOCUMENTACAO_TECNICA.md      # Este arquivo
 ├── pyproject.toml                   # Definição do pacote
@@ -896,6 +987,11 @@ Submeter as predições do modelo a dermatologistas para avaliação qualitativa
 
 Aplicar temperature scaling ou Platt scaling para calibrar a confiança das predições. Útil para sistemas de apoio à decisão (médico precisa saber "quão certo" o modelo está).
 
+### 9.8 Seleção de hiperparâmetros em validação cruzada aninhada
+
+A análise de sensibilidade (notebook 10) mostrou que LR 1e-3, 40 épocas e ausência de corte de NEV superam a configuração do v7 em 5/5 dobras em alguma métrica. Para adotá-las sem viés de seleção, seria preciso escolher a configuração num loop interno de validação cruzada, avaliando-a num loop externo nunca usado na escolha. Com o cache de embeddings, o custo é baixo (cada treino de cabeça leva segundos).
+
+
 ---
 
 ## 10. Referências
@@ -957,6 +1053,7 @@ Aplicar temperature scaling ou Platt scaling para calibrar a confiança das pred
 | `b9769ac` | v8: unfreeze dos 2 últimos blocos do SigLIP com LR discriminativo |
 | `7165448` | v8: AMP (autocast + GradScaler) para corrigir NaN/lentidão do unfreeze |
 | `60bf30c` | v7 kfold+tta: validação cruzada 5-fold estratificada + TTA |
+| `8e36479` | v7: notebook 10 (ablação de modalidades + sensibilidade de hiperparâmetros) |
 
 ---
 
